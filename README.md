@@ -285,3 +285,11 @@ they can fire.
 
 Questions? Reach your Clarity contact — we're happy to help with the
 integration.
+
+## About this repository
+
+This repository is a **read-only source mirror**: every release of the
+Clarity iOS SDK is published here and tagged `vX.Y.Z` — see
+`CHANGELOG.md` for what changed in each version. The package builds from
+source; `swift test` runs the platform-independent core test suite on any
+machine with Swift 5.10+.
