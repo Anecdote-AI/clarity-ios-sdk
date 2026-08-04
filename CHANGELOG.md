@@ -1,5 +1,15 @@
 # Changelog
 
+## 1.0.2
+
+Packaging-only release — no code changes.
+
+- **CocoaPods support.** `ClaritySDK.podspec` now ships alongside
+  `Package.swift`, so CocoaPods-based hosts can consume the SDK. Swift
+  Package Manager remains the recommended channel; the pod resolves the same
+  tag and the same source. The pod version is read from
+  `ClarityVersion.swift`, so it can never diverge from the release tag.
+
 ## 1.0.1
 
 Documentation-only release — no code changes.
