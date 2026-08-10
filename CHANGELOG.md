@@ -1,5 +1,30 @@
 # Changelog
 
+## 1.1.0
+
+- **`ClarityConfig.showDiagnosticsOnFailure`.** When the widget fails to load,
+  the SDK can now present a screen naming the reason instead of nothing at all.
+  Previously a failed load left an integrator with a dead Help button and no
+  signal unless they had registered a listener.
+
+  This surface is **developer-only** and must never reach an end user. It is
+  presented only when all of: a `show()` was actually waiting on the load (a
+  background `preload()` failing stays silent rather than stealing focus), and
+  the HOST app is debuggable — the app being developed, not this SDK, since an
+  SDK consumed as a release binary into a debug app is still a development
+  build from the integrator's point of view. Set the flag explicitly to
+  override that default in either direction; leave it `nil` to decide from the
+  build. The decision is a pure function, unit-tested directly rather than
+  inferred from a simulator run, because "never in a release build" is the
+  whole contract.
+
+- Removed a dead `WKProcessPool` from the WebView factory (no behaviour
+  change — `WKProcessPool` has been a no-op since iOS 15, the deployment floor).
+
+Note: the rejected-session diagnosis shipped in the same period is a **page**
+change, not an SDK one. `pageLoadedError` has been decoded since before 1.0.2,
+so that fix reaches users on a frontend deploy with no SDK upgrade required.
+
 ## 1.0.2
 
 Packaging-only release — no code changes.

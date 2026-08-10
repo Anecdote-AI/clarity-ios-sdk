@@ -3,11 +3,16 @@ import ObjectiveC
 import UIKit
 import WebKit
 
-/// Builds `WKWebViewConfiguration`s for the widget (and the image
-/// preview) so every WebView shares one process pool and the DEFAULT website
-/// data store — the conversation session must survive app launches (Android
-/// parity: the process-wide CookieManager), and the preview must load
-/// session-authenticated attachment URLs with the chat's cookies.
+/// Builds `WKWebViewConfiguration`s for the widget (and the image preview) so
+/// every WebView shares the DEFAULT website data store — the conversation
+/// session must survive app launches (Android parity: the process-wide
+/// CookieManager), and the preview must load session-authenticated attachment
+/// URLs with the chat's cookies. The data store is the whole mechanism: it is
+/// what owns cookies and their persistence.
+///
+/// (There is deliberately no shared `WKProcessPool`. It carried nothing here —
+/// as of iOS 15, our deployment floor, WebKit ignores it outright: "Creating
+/// and using multiple instances of WKProcessPool no longer has any effect.")
 ///
 /// The default store is shared with the host app's own WebViews, which is why
 /// `WebSessionCleaner` only ever wipes data scoped to the widget's domain.
@@ -16,9 +21,7 @@ import WebKit
 /// Main-thread confined by convention — see `MainThread`.
 enum WebViewFactory {
 
-    static let processPool = WKProcessPool()
-
-    /// Configuration for the widget WebView: shared pool/store, the bridge
+    /// Configuration for the widget WebView: shared data store, the bridge
     /// user script, inline media, no user-gesture requirement for playback.
     static func widgetConfiguration(handler: WKScriptMessageHandler) -> WKWebViewConfiguration {
         let configuration = baseConfiguration()
@@ -35,7 +38,6 @@ enum WebViewFactory {
     /// has its own tiny reporter script but must share cookies/session.
     static func baseConfiguration() -> WKWebViewConfiguration {
         let configuration = WKWebViewConfiguration()
-        configuration.processPool = processPool
         configuration.websiteDataStore = .default()
         configuration.allowsInlineMediaPlayback = true
         configuration.mediaTypesRequiringUserActionForPlayback = []

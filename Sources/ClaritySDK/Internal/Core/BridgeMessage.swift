@@ -4,7 +4,11 @@ import Foundation
 /// `ClarityBridge.postMessage(json)`.
 ///
 ///  - `pageLoaded`             → page is authenticated and painted, safe to present
-///  - `pageLoadedError`        → page failed to boot (bad key, not found …)
+///  - `pageLoadedError`        → the page will never become ready, so stop waiting:
+///    its own `session/complete` was rejected (required contact attributes
+///    missing, token spent, platform error). Carries `error.code` (the HTTP
+///    status, 0 if there was no response) and `error.message`. Without it the
+///    only signal is the load timeout, which cannot say why.
 ///  - `contentHeightDidChange` → content height in CSS px (parsed, currently unused)
 ///  - `close`                  → web UI asks the native container to close
 ///  - `newMessage`             → agent/AI reply arrived while the widget is hidden

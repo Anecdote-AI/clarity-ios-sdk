@@ -28,6 +28,22 @@ final class BridgeMessageTests: XCTestCase {
         assertParse(#"{"action":"pageLoadedError"}"#, .pageLoadedError(code: 0, message: "unknown"))
     }
 
+    /// The REAL payload the live-chat page sends when its `session/complete`
+    /// is rejected — byte-identical to the literal asserted in
+    /// `nativeSdkSessionRejected.test.ts` and `MessageActionTest.kt`. This is
+    /// the path a customer hit: without it the SDK could only report a generic
+    /// load timeout 15s later.
+    func testRejectedSessionPayloadFromTheLiveChatPage() {
+        assertParse(
+            #"{"action":"pageLoadedError","error":{"code":422,"message":"live chat session was not completed: required contact attributes are missing (company, plan) - set them before the widget loads"}}"#,
+            .pageLoadedError(
+                code: 422,
+                message: "live chat session was not completed: required contact attributes "
+                    + "are missing (company, plan) - set them before the widget loads"
+            )
+        )
+    }
+
     func testContentHeightRequiresHeight() {
         assertParse(
             #"{"action":"contentHeightDidChange","height":420.5}"#,

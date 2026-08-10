@@ -34,7 +34,9 @@ sends it during the session handshake and mismatches are rejected.
 Credentials are identifiers, not secrets: shipping them inside the app is
 fine.
 
-## 2. Install (Swift Package Manager)
+## 2. Install
+
+### Swift Package Manager
 
 In Xcode: **File → Add Package Dependencies…** and paste
 `https://github.com/Anecdote-AI/clarity-ios-sdk` (rule: *Up to Next Major
@@ -48,6 +50,17 @@ dependencies: [
     )
 ]
 ```
+
+### CocoaPods
+
+```ruby
+pod 'ClaritySDK', '~> 1.0'
+```
+
+Then `pod install`. Same source, same versions as SPM — pick whichever your
+project already uses. (CocoaPods is also what a Flutter or React Native plugin
+needs, since a plugin's iOS side is a pod and cannot depend on an SPM-only
+package.)
 
 The product is **ClaritySDK**; the public entry point is the `Clarity`
 enum.
@@ -187,6 +200,20 @@ Clarity.logEvent("checkout_failed", params: ["code": "card_declined"])
 All safe to call any time from any thread; values queue until the widget
 session is live. Server-side event ingestion activates with the platform's
 product-events rollout for your organization — ask your Clarity contact.
+
+**If your workspace marks contact attributes as required,** set them
+immediately after `Clarity.init` — before the widget first loads, not just
+before the first `show()`. Only attributes present at load time reach the
+session; a session missing a required one is rejected, and a rejected session
+never becomes ready, so `show()` reports `.pageLoadFailed` with the missing keys
+named in the message. With the default `autoPreload: true` the first load starts
+~1.5s after `init` — beat it, or set `autoPreload: false` and call
+`Clarity.preload()` once the attributes are in.
+
+While developing, a **debug-only** screen names the reason whenever the widget
+fails to open, so a misconfiguration is visible without wiring a listener. It
+never appears in a Release build; `showDiagnosticsOnFailure` forces it either
+way if your build configuration does not map to `DEBUG` as expected.
 
 ## 9. Push notifications (APNs)
 

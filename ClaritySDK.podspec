@@ -29,9 +29,11 @@ Pod::Spec.new do |s|
 
   s.homepage = 'https://github.com/Anecdote-AI/clarity-ios-sdk'
   s.author   = { 'Clarity' => 'support@onclarity.com' }
-  # Declared inline rather than as a :file — the package ships no LICENSE
-  # (the release workflow copies one only when present), and CocoaPods
-  # requires a license to publish.
+  # Declared inline rather than as a :file. LICENSE does ship, but the release
+  # workflow mirrors it conditionally (`[ -f LICENSE ] && rsync ... || true`),
+  # so a :file reference would depend on a file the publish step is allowed to
+  # skip — and a missing license fails `pod spec lint` against a trunk that is
+  # append-only. Inline is unconditional.
   s.license  = {
     :type => 'Proprietary',
     :text => 'Copyright Anecdote AI. All rights reserved.',

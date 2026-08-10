@@ -32,6 +32,15 @@ public struct ClarityConfig: Equatable, Sendable {
     public var showNativeCloseButton: Bool
     /// How long to wait for the page's `pageLoaded` signal before failing the load.
     public var loadTimeout: TimeInterval
+    /// Show a **developer-only** screen naming the reason when a load fails
+    /// during `show`, instead of presenting nothing.
+    ///
+    /// `nil` (default) decides from the build: on in a Debug build, off in
+    /// Release. Set it explicitly if your build configuration does not map to
+    /// `DEBUG` the way you expect — the SDK can only see how it was itself
+    /// compiled. It never appears for a failed background pre-warm; only when a
+    /// `show` was waiting.
+    public var showDiagnosticsOnFailure: Bool?
 
     public static let defaultSheetHeightFraction: Double = 0.85
     public static let defaultLoadTimeout: TimeInterval = 15
@@ -48,7 +57,8 @@ public struct ClarityConfig: Equatable, Sendable {
         autoFocusInput: Bool = false,
         autoPreload: Bool = true,
         showNativeCloseButton: Bool = false,
-        loadTimeout: TimeInterval = defaultLoadTimeout
+        loadTimeout: TimeInterval = defaultLoadTimeout,
+        showDiagnosticsOnFailure: Bool? = nil
     ) {
         self.organizationId = organizationId
         self.integrationKey = integrationKey
@@ -62,5 +72,6 @@ public struct ClarityConfig: Equatable, Sendable {
         self.autoPreload = autoPreload
         self.showNativeCloseButton = showNativeCloseButton
         self.loadTimeout = loadTimeout
+        self.showDiagnosticsOnFailure = showDiagnosticsOnFailure
     }
 }

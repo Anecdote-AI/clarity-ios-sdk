@@ -601,6 +601,9 @@ final class WidgetEngine: NSObject {
         // explicit show/preload starts the next generation.
         loadGeneration += 1
         state = .failed
+        // Read before the reset below: whether anyone was waiting on a window
+        // decides whether the developer diagnostic is presented at all.
+        let showWasPending = pendingShowMode != nil
         pendingShowMode = nil
         // The failed document is DISCARDED, not parked: WebKit does not abort
         // a timed-out load, so the instance can still fire pageLoaded later —
@@ -614,6 +617,77 @@ final class WidgetEngine: NSObject {
         }
         notify { $0.onWidgetFailed(code: code, message: message) }
         reportError(kind: kind, code: code, message: message)
+        // Last, so the host's own handling always runs first — it may present
+        // its own fallback, and this must not pre-empt it.
+        maybePresentDiagnostic(kind: kind, code: code, message: message,
+                               showWasPending: showWasPending)
+    }
+
+    /// See `DiagnosticGate` for the rule. Twin of Android's
+    /// `maybePresentDiagnostic`; failing to show the failure screen must never
+    /// itself become the host app's problem.
+    private func maybePresentDiagnostic(
+        kind: ClarityError.Kind,
+        code: Int,
+        message: String,
+        showWasPending: Bool
+    ) {
+        guard DiagnosticGate.shouldPresent(
+            override: config?.showDiagnosticsOnFailure,
+            showWasPending: showWasPending
+        ) else { return }
+        // The same condition `WidgetEngine+Presentation` waits out for the real
+        // container (UIKit silently drops a presentation issued mid-transition).
+        // Spelled out here rather than shared, because that file's helper is
+        // file-private and this path deliberately does NOT retry: the error has
+        // already reached the host, and a diagnostic surfacing later over
+        // unrelated UI would confuse more than it explains.
+        guard let presenter = TopViewController.find(),
+              !presenter.isBeingPresented,
+              !presenter.isBeingDismissed,
+              presenter.presentedViewController == nil
+        else {
+            ClarityLog.log("Diagnostic not shown: no presentable view controller")
+            return
+        }
+        presenter.present(
+            ClarityDiagnosticViewController(
+                kind: kind.rawValue, code: code, message: message
+            ),
+            animated: true
+        )
+    }
+
+    /// Twin of Android's `logPageForensics` (`WidgetWebViewController`) — same
+    /// fields, same JS, so the two platforms' logs read alike. A timeout says
+    /// the page never reported readiness; these fields say whether it failed to
+    /// boot or booted and rendered nothing (its `session/complete` rejected —
+    /// see `pageLoadedError` in `BridgeMessage`).
+    ///
+    /// Dispatched BEFORE `onPageFailed`, which discards the WebView, so the
+    /// probe reaches a live instance. The result only ever reaches the debug
+    /// channel, never the error: the callback may never arrive, and a failure
+    /// the host is never told about is worse than one without detail.
+    private func logPageForensics() {
+        guard let view = webView else { return }
+        let script = """
+        (function () {
+          try {
+            return JSON.stringify({
+              readyState: document.readyState,
+              nativeReady: !!window.__clarityNativeReady,
+              hasBridge: !!window.ClarityBridge,
+              bodyChars: document.body ? document.body.innerText.length : -1
+            });
+          } catch (e) { return 'forensics-error: ' + e; }
+        })()
+        """
+        // WebKit bridges the JS string straight through — no second decode,
+        // unlike Android's evaluateJavascript.
+        view.evaluateJavaScript(script) { [weak self] value, _ in
+            guard let self, let json = value as? String else { return }
+            self.debug("page forensics: \(json)")
+        }
     }
 
     private func scheduleTimeout() {
@@ -627,6 +701,8 @@ final class WidgetEngine: NSObject {
         loadTimeoutWork.schedule(after: timeout) { [weak self] in
             guard let self else { return }
             if self.state == .loading {
+                // Before onPageFailed, which discards the WebView.
+                self.logPageForensics()
                 self.onPageFailed(
                     kind: .pageLoadFailed,
                     code: ClarityError.codePageLoadTimeout,
