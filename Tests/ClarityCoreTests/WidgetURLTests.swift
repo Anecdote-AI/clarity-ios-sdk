@@ -10,14 +10,16 @@ final class WidgetURLTests: XCTestCase {
         user: ClarityUser = ClarityUser(),
         userAttributes: [String: ClarityAttributeValue] = [:],
         ticketAttributes: [String: ClarityAttributeValue] = [:],
-        token: String = "t"
+        token: String = "t",
+        microphoneAvailable: Bool = false
     ) -> String {
         WidgetURL.build(
             config: config,
             user: user,
             userAttributes: userAttributes,
             ticketAttributes: ticketAttributes,
-            oneTimeToken: token
+            oneTimeToken: token,
+            microphoneAvailable: microphoneAvailable
         )
     }
 
@@ -142,7 +144,30 @@ final class WidgetURLTests: XCTestCase {
     func testPreviewApiUsesSameBuilder() {
         let config = makeTestConfig()
         let preview = Clarity.previewWidgetUrl(config: config)
-        let direct = build(config, token: "ONE_TIME_TOKEN")
+        let direct = build(
+            config,
+            token: "ONE_TIME_TOKEN",
+            microphoneAvailable: HostCapabilities.microphoneCaptureProvisioned
+        )
         XCTAssertEqual(preview, direct)
+    }
+
+    // The page offers voice and dictation inside the SDK only when the URL
+    // says the host can grant the microphone — a wrong answer is silent: a
+    // dead mic button, or none at all.
+    func testMicrophoneCapabilityAdvertisedWhenProvisioned() {
+        let url = build(makeTestConfig(), microphoneAvailable: true)
+        XCTAssertTrue(url.contains("&nativeCapabilities=microphone"))
+    }
+
+    func testMicrophoneCapabilityOmittedWhenNotProvisioned() {
+        let url = build(makeTestConfig(), microphoneAvailable: false)
+        XCTAssertFalse(url.contains("nativeCapabilities="))
+    }
+
+    func testMicrophoneCapabilityLeavesTheRestOfTheUrlAlone() {
+        let without = build(makeTestConfig())
+        let with = build(makeTestConfig(), microphoneAvailable: true)
+        XCTAssertEqual(with.replacingOccurrences(of: "&nativeCapabilities=microphone", with: ""), without)
     }
 }

@@ -95,7 +95,8 @@ public enum Clarity {
             user: user,
             userAttributes: userAttributes.mapValues(ClarityAttributeValue.string),
             ticketAttributes: ticketAttributes.mapValues(ClarityAttributeValue.string),
-            oneTimeToken: tokenPlaceholder
+            oneTimeToken: tokenPlaceholder,
+            microphoneAvailable: HostCapabilities.microphoneCaptureProvisioned
         )
     }
 

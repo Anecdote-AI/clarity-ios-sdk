@@ -43,16 +43,21 @@ extension WidgetEngine: WKNavigationDelegate {
         decisionHandler: @escaping (WKNavigationActionPolicy) -> Void
     ) {
         // Keep the widget origin inside the WebView; anything else (links in
-        // messages, articles…) opens in the external browser. Compared as a
-        // full origin — a bare host match would keep a port or scheme change
-        // inside the WebView and replace the live conversation with it.
-        // Host-less URLs (about:blank, data:) and an unparseable baseUrl fall
-        // through to .allow, as before.
+        // messages, articles…) opens in the external browser. The rule itself
+        // is `ExternalNavigationPolicy`, which is unit-tested — WKNavigationAction
+        // cannot be built in a test, so only the unwrapping lives here.
+        //
+        // `targetFrame == nil` is a NEW WINDOW (target=_blank), which is a
+        // link; a frame that exists and is not the main one is the page
+        // loading its own content, which is not.
+        let isSubframe = navigationAction.targetFrame.map { !$0.isMainFrame } ?? false
+
         if let url = navigationAction.request.url,
-           url.host != nil,
-           let widgetBase = config.flatMap({ URL(string: $0.baseUrl) }),
-           widgetBase.isWebLink, widgetBase.host != nil,
-           !url.isSameOrigin(as: widgetBase) {
+           ExternalNavigationPolicy.shouldOpenExternally(
+               url: url,
+               baseUrl: config?.baseUrl,
+               isSubframe: isSubframe
+           ) {
             ExternalLinkOpener.open(url)
             decisionHandler(.cancel)
             return

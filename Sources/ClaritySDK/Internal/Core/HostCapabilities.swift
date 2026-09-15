@@ -22,8 +22,9 @@ enum HostCapabilities {
     }
 
     /// True when the host app's Info.plist carries a non-empty
-    /// `NSMicrophoneUsageDescription` (getUserMedia audio; the widget page
-    /// does not record audio today — checked for defense in depth).
+    /// `NSMicrophoneUsageDescription` — the precondition for getUserMedia
+    /// audio (voice calls, composer dictation). Also decides whether the
+    /// widget URL advertises the microphone to the page (`WidgetURL`).
     static var microphoneCaptureProvisioned: Bool {
         hasUsageDescription(microphoneUsageKey, in: Bundle.main.infoDictionary)
     }

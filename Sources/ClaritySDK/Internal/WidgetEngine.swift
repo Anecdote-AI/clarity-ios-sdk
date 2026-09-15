@@ -528,7 +528,8 @@ final class WidgetEngine: NSObject {
                 user: user,
                 userAttributes: attributes[.user] ?? [:],
                 ticketAttributes: attributes[.ticket] ?? [:],
-                oneTimeToken: token
+                oneTimeToken: token,
+                microphoneAvailable: HostCapabilities.microphoneCaptureProvisioned
             )
             if let url = URL(string: urlString) {
                 scheduleTimeout()

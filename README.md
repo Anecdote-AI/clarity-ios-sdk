@@ -260,6 +260,22 @@ the camera option is safely disabled (the tap does nothing, a debug event
 is emitted, and an init-time audit warns in the console). Photo Library
 and file uploads keep working either way.
 
+### Voice and dictation
+
+If your organization has a voice agent or composer dictation enabled, the
+chat can offer a microphone button. It records inside *your* app's process
+too, so it is opt-in the same way — declare a microphone usage description:
+
+```xml
+<key>NSMicrophoneUsageDescription</key>
+<string>The microphone lets you talk to a voice agent or dictate a message in your support conversation.</string>
+```
+
+With the key present the SDK tells the chat it may offer the microphone,
+and iOS shows its standard permission prompt on first use. Without it the
+chat shows no microphone button at all, and any capture request is denied
+up front rather than letting iOS terminate your app.
+
 ## 11. Errors — the SDK never crashes your app
 
 Every failure is classified into `ClarityError.kind` and delivered through

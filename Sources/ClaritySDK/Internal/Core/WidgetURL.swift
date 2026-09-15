@@ -8,12 +8,18 @@ import Foundation
 /// intentionally identical; the only difference is `nativeMode=ios`.
 enum WidgetURL {
 
+    /// Comma-separated capabilities the page may rely on (live-chat
+    /// `nativeSdkBridge.ts`) — same spelling as Android's `WidgetUrl.kt`.
+    static let nativeCapabilitiesParam = "nativeCapabilities"
+    static let microphoneCapability = "microphone"
+
     static func build(
         config: ClarityConfig,
         user: ClarityUser,
         userAttributes: [String: ClarityAttributeValue],
         ticketAttributes: [String: ClarityAttributeValue],
-        oneTimeToken: String
+        oneTimeToken: String,
+        microphoneAvailable: Bool
     ) -> String {
         var params: [(String, String)] = [
             ("oneTimeToken", oneTimeToken),
@@ -30,6 +36,13 @@ enum WidgetURL {
             ("integrationKey", config.integrationKey),
             ("sdkVersion", ClarityVersion.current),
         ]
+        // Tells the page this SDK can hand it the microphone (the host
+        // carries NSMicrophoneUsageDescription, so the getUserMedia gate
+        // prompts instead of denying). SDK builds that predate the param
+        // never send it, so the page keeps voice and dictation hidden there.
+        if microphoneAvailable {
+            params.append((nativeCapabilitiesParam, microphoneCapability))
+        }
         if let language = config.language { params.append(("language", language)) }
         if let externalId = user.externalId { params.append(("externalId", externalId)) }
         if let firstName = user.firstName { params.append(("firstName", firstName)) }

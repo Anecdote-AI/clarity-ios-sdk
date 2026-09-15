@@ -1,5 +1,24 @@
 # Changelog
 
+## 1.2.0
+
+- **HTML widgets render again.** The navigation policy treated every
+  cross-origin navigation as a link the customer followed, including ones
+  targeting a SUB-frame. An html widget is a sandboxed iframe whose `src`
+  redirects to presigned object storage — a foreign origin by design — so the
+  widget's own document was handed to the external browser and the frame was
+  cancelled, leaving an empty box that timed out into the page's "content
+  unavailable" fallback. Only main-frame navigations (and new windows, i.e.
+  `target=_blank`) are links now. Ordinary links in messages and articles are
+  unaffected: they are main-frame navigations.
+
+- **Voice calls and composer dictation.** When the host app declares
+  `NSMicrophoneUsageDescription`, the widget URL now carries
+  `nativeCapabilities=microphone`, and the chat offers its microphone
+  controls inside the SDK (the page kept them hidden in every SDK WebView
+  until now). Without the key nothing changes. See README "Voice and
+  dictation".
+
 ## 1.1.0
 
 - **`ClarityConfig.showDiagnosticsOnFailure`.** When the widget fails to load,
