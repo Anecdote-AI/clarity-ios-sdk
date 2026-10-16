@@ -17,6 +17,11 @@ import Foundation
 ///    a full-screen preview (in the browser the host page renders a lightbox)
 ///  - `openLink`               → user tapped a link in a message/article; the
 ///    page never navigates for links, so native opens the external browser
+///  - `requestPresentation`    → an html screen wants the room around the chat
+///    window, which on a phone is the whole device screen: `fullScreen` while
+///    the screen holds it, `default` to go back to the presentation the host
+///    app configured. A sheet bounds the page at its own height, and no CSS
+///    inside the WebView reaches past it — only the container can.
 ///
 /// Port of the Android SDK's `MessageAction.kt`; parsing defaults are kept
 /// identical (missing optional fields fall back rather than fail).
@@ -30,6 +35,7 @@ enum BridgeMessage: Equatable {
     case ticketStatusChanged(status: String)
     case openImage(url: String)
     case openLink(url: String)
+    case requestPresentation(fullScreen: Bool)
     case unknown(action: String)
 
     /// nil = unparseable (not JSON, no `action`, or a required field missing) —
@@ -65,6 +71,13 @@ enum BridgeMessage: Equatable {
             return .openImage(url: json["url"] as? String ?? "")
         case "openLink":
             return .openLink(url: json["url"] as? String ?? "")
+        case "requestPresentation":
+            // Anything but the one word means "as the host configured it": an
+            // unknown presentation is not a reason to throw a sheet open over
+            // the app.
+            return .requestPresentation(
+                fullScreen: (json["presentation"] as? String) == "fullScreen"
+            )
         default:
             return .unknown(action: action)
         }

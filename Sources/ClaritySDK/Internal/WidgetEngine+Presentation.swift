@@ -171,6 +171,7 @@ extension WidgetEngine {
             sheetHeightFraction: request.fraction,
             autoFocusInput: request.config.autoFocusInput,
             showNativeCloseButton: request.config.showNativeCloseButton,
+            language: request.config.language,
             engine: self
         )
         WidgetHolder.presentedWebView = request.webView

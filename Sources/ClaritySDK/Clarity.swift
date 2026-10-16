@@ -283,7 +283,7 @@ public enum Clarity {
         guard isClarityPush(userInfo: userInfo) else { return false }
         #if canImport(UIKit)
         let body = (userInfo["body"] as? String) ?? ""
-        NotificationHelper.showNewMessage(body)
+        NotificationHelper.showNewMessage(body, language: config?.language)
         #endif
         return true
     }

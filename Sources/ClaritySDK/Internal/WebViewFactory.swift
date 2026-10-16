@@ -50,6 +50,14 @@ enum WebViewFactory {
         webView.isOpaque = false
         webView.backgroundColor = .clear
         webView.scrollView.backgroundColor = .clear
+        // The edge swipe walks the page's history: an html screen opened over
+        // the chat stands in it as one entry (the page pushes it when the
+        // screen opens and collapses the screen when it is popped), so the
+        // gesture leaves the screen the way it would in Safari. The page never
+        // navigates otherwise — links open externally — so with no screen
+        // open the swipe has nothing to do (Android parity: the back button
+        // calls `goBack()` first).
+        webView.allowsBackForwardNavigationGestures = true
         // The page scrolls natively; no rubber-band bounce at the edges of
         // the widget chrome (Android parity: OVER_SCROLL_NEVER).
         webView.scrollView.bounces = false

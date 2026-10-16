@@ -72,6 +72,31 @@ final class BridgeMessageTests: XCTestCase {
         assertParse(#"{"action":"openLink","url":"https://x/page"}"#, .openLink(url: "https://x/page"))
     }
 
+    /// An html screen asking for the room around the chat window. A bottom
+    /// sheet bounds the page at its own height, so `fullScreen` is the only
+    /// way a screen can cover the device; `default` gives the host app's own
+    /// presentation back. Anything else means the host's presentation too — a
+    /// word we do not know is no reason to throw a sheet open over the app.
+    /// Same cases as Android's `MessageActionTest`.
+    func testPresentationRequestDecodesTheOneWordThatMeansFullScreen() {
+        assertParse(
+            #"{"action":"requestPresentation","presentation":"fullScreen"}"#,
+            .requestPresentation(fullScreen: true)
+        )
+        assertParse(
+            #"{"action":"requestPresentation","presentation":"default"}"#,
+            .requestPresentation(fullScreen: false)
+        )
+        assertParse(
+            #"{"action":"requestPresentation"}"#,
+            .requestPresentation(fullScreen: false)
+        )
+        assertParse(
+            #"{"action":"requestPresentation","presentation":"sheet"}"#,
+            .requestPresentation(fullScreen: false)
+        )
+    }
+
     func testUnknownActionPreserved() {
         assertParse(#"{"action":"somethingNew"}"#, .unknown(action: "somethingNew"))
     }

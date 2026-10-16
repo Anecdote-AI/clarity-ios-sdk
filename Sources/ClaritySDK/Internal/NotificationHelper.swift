@@ -14,8 +14,6 @@ enum NotificationHelper {
     /// Marker in userInfo so `Clarity.handleNotificationResponse` can route taps.
     static let userInfoMarkerKey = "clarity_notification"
 
-    private static let title = "New message from support"
-    private static let fallbackBody = "You have a new reply"
 
     /// Bumped by `cancel()`, captured by `showNewMessage`, re-checked before
     /// the request is filed. `getNotificationSettings` answers asynchronously,
@@ -28,7 +26,9 @@ enum NotificationHelper {
 
     /// Safe from any thread: `Clarity.handlePush` forwards straight from the
     /// host's push handler, so the generation bookkeeping hops to main first.
-    static func showNewMessage(_ text: String) {
+    /// - Parameter language: `ClarityConfig.language`; the title and the
+    ///   fallback body follow it like the chat does (`NativeStrings`).
+    static func showNewMessage(_ text: String, language: String?) {
         MainThread.run {
             let issuedGeneration = generation
             let center = UNUserNotificationCenter.current()
@@ -38,8 +38,10 @@ enum NotificationHelper {
                 else { return }
 
                 let content = UNMutableNotificationContent()
-                content.title = title
-                content.body = text.isEmpty ? fallbackBody : text
+                content.title = NativeStrings.text(.notificationTitle, language: language)
+                content.body = text.isEmpty
+                    ? NativeStrings.text(.notificationFallbackBody, language: language)
+                    : text
                 content.sound = .default
                 content.userInfo = [userInfoMarkerKey: true]
                 content.interruptionLevel = .active

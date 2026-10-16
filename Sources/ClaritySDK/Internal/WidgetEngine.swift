@@ -736,7 +736,7 @@ final class WidgetEngine: NSObject {
         case .newMessage(let text):
             notify { $0.onNewMessage(text) }
             if !widgetVisible {
-                NotificationHelper.showNewMessage(text)
+                NotificationHelper.showNewMessage(text, language: config?.language)
             }
         case .unreadCountDidChange(let count):
             unreadCount = count
@@ -749,9 +749,30 @@ final class WidgetEngine: NSObject {
             openImagePreview(url)
         case .openLink(let url):
             openExternalLink(url)
+        case .requestPresentation(let fullScreen):
+            applyRequestedPresentation(fullScreen: fullScreen)
         case .unknown(let action):
             ClarityLog.log("Unknown action: \(action)")
         }
+    }
+
+    /// The page asked for the room around the chat window, or gave it back.
+    ///
+    /// A bottom sheet bounds the page at its own height, so an html screen
+    /// that wants the whole device screen can only get it from the container,
+    /// which gives what a sheet can give IN PLACE: raised to its largest
+    /// detent while the screen holds the room, dropped back to the app's
+    /// fraction when it gives the room up (`setRoomAroundChat`). The page
+    /// keeps every answer the customer has typed, nothing leaves the screen,
+    /// and the page's own glide waits for the resize this produces. A
+    /// full-screen container already gives everything, and nothing happens.
+    private func applyRequestedPresentation(fullScreen: Bool) {
+        guard let container = WidgetHolder.presentedContainer
+            as? ClarityWidgetViewController
+        else { return }
+
+        debug("presentation requested: \(fullScreen ? "fullScreen" : "default")")
+        container.setRoomAroundChat(given: fullScreen)
     }
 
     /// The page asked to preview an image attachment (tap on a thumbnail) —
@@ -765,7 +786,7 @@ final class WidgetEngine: NSObject {
             debug("openImage: no view controller to present from")
             return
         }
-        let preview = ImagePreviewViewController(imageUrl: url)
+        let preview = ImagePreviewViewController(imageUrl: url, language: config?.language)
         WidgetHolder.presentedPreview = preview
         presenter.present(preview, animated: true)
     }

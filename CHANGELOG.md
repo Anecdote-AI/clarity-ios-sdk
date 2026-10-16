@@ -1,5 +1,41 @@
 # Changelog
 
+## 1.3.0
+
+- **The SDK's own strings speak the chat's language.** The notification title
+  and fallback text, the image preview's error and retry, and the native ✕'s
+  VoiceOver label were always English. They now follow `language` (else the
+  device's language) like the chat, with Arabic alongside English; any other
+  language still gets English.
+- **The native ✕ follows the chat's direction.** With `showNativeCloseButton`
+  it was pinned to the app's trailing edge, so an English app with
+  `language: "ar"` showed it on the right while the chat's own close button
+  sat on the left — two crosses. It now takes the side of the page's own close
+  button (left for a right-to-left chat), covering it as it does when the two
+  agree.
+- **`autoFocusInput` focuses the composer again.** The widget lands on Home,
+  which has no composer, so the focus the SDK applied once on opening found
+  nothing and the setting did nothing. When there is no composer yet, the SDK
+  now waits for one and focuses it the moment the customer enters a
+  conversation — once per opening, and never after the widget closes.
+- **An html screen can take the whole sheet.** A screen registered to open
+  over everything around the chat window now asks the container for the
+  room (`requestPresentation` over the page bridge): a bottom sheet rises
+  to its largest detent for as long as the screen is open — in place, the
+  WebView attached throughout, so nothing the customer typed is lost and
+  nothing leaves the screen — and drops back to your `sheetHeightFraction`
+  when the screen collapses. A `.fullScreen` presentation already gives the
+  whole screen and does nothing. Without this release such a screen fills
+  the sheet as sized, which is what it did before. A screen registered for
+  the chat window is unaffected: it fills the widget as presented.
+- **The edge swipe leaves an html screen opened over the chat.** A screen a
+  template registers to open over the whole chat now stands in the
+  WebView's history while it is open, and `allowsBackForwardNavigationGestures`
+  lets the back swipe pop it — the screen collapses into its message the way
+  its own ✕ collapses it. With no screen open the swipe does nothing; the
+  widget's own close paths are unchanged. Without this release the page still
+  opens and closes such screens; only the gesture is missing.
+
 ## 1.2.0
 
 - **HTML widgets render again.** The navigation policy treated every

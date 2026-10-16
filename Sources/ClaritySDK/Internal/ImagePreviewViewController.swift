@@ -28,11 +28,13 @@ final class ImagePreviewViewController: UIViewController {
 
     private let imageUrl: String
     private var webView: WKWebView?
+    private let language: String?
     private let spinner = UIActivityIndicatorView(style: .medium)
     private let failedStack = UIStackView()
 
-    init(imageUrl: String) {
+    init(imageUrl: String, language: String?) {
         self.imageUrl = imageUrl
+        self.language = language
         super.init(nibName: nil, bundle: nil)
         modalPresentationStyle = .fullScreen
     }
@@ -47,7 +49,11 @@ final class ImagePreviewViewController: UIViewController {
         makeImageWebView()
         makeSpinner()
         makeFailedStack()
-        let closeButton = CloseButton.make(target: self, action: #selector(closeTapped))
+        let closeButton = CloseButton.make(
+            target: self,
+            action: #selector(closeTapped),
+            accessibilityLabel: NativeStrings.text(.close, language: language)
+        )
         view.addSubview(closeButton)
 
         NSLayoutConstraint.activate([
@@ -86,11 +92,11 @@ final class ImagePreviewViewController: UIViewController {
 
     private func makeFailedStack() {
         let failedLabel = UILabel()
-        failedLabel.text = Self.failedLabelText
+        failedLabel.text = NativeStrings.text(.imageLoadFailed, language: language)
         failedLabel.textColor = UIColor.white.withAlphaComponent(0.8)
         failedLabel.font = .systemFont(ofSize: Self.textFontSize)
         let retryButton = UIButton(type: .system)
-        retryButton.setTitle(Self.retryButtonTitle, for: .normal)
+        retryButton.setTitle(NativeStrings.text(.imageRetry, language: language), for: .normal)
         retryButton.setTitleColor(.white, for: .normal)
         retryButton.titleLabel?.font = .systemFont(ofSize: Self.textFontSize, weight: .semibold)
         retryButton.addTarget(self, action: #selector(retryTapped), for: .touchUpInside)
@@ -141,10 +147,6 @@ final class ImagePreviewViewController: UIViewController {
 
     private static let textFontSize: CGFloat = 15
     private static let failedStackSpacing: CGFloat = 4
-    /// User-facing and English-only, like the close button's accessibility
-    /// label: the SDK ships no localization tables (Android parity).
-    private static let failedLabelText = "Couldn't load image"
-    private static let retryButtonTitle = "Try again"
     /// Embedded in emitted HTML — kept as Strings because numeric
     /// interpolation would render "5.0" and change the page bytes.
     private static let maxZoomScale = "5"

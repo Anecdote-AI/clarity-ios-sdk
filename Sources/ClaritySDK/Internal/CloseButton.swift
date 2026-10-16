@@ -14,7 +14,7 @@ enum CloseButton {
     private static let cornerRadius: CGFloat = diameter / 2
     private static let backgroundAlpha: CGFloat = 0.4
 
-    static func make(target: Any?, action: Selector) -> UIButton {
+    static func make(target: Any?, action: Selector, accessibilityLabel: String) -> UIButton {
         let button = UIButton(type: .system)
         let image = UIImage(
             systemName: "xmark",
@@ -26,7 +26,7 @@ enum CloseButton {
         button.tintColor = .white
         button.backgroundColor = UIColor.black.withAlphaComponent(backgroundAlpha)
         button.layer.cornerRadius = cornerRadius
-        button.accessibilityLabel = "Close"
+        button.accessibilityLabel = accessibilityLabel
         button.addTarget(target, action: action, for: .touchUpInside)
         button.translatesAutoresizingMaskIntoConstraints = false
         return button
@@ -34,14 +34,33 @@ enum CloseButton {
 
     /// Fixed size, pinned top-trailing inside `view`'s safe area.
     static func layoutConstraints(for button: UIButton, in view: UIView) -> [NSLayoutConstraint] {
+        sizeAndTopConstraints(for: button, in: view)
+            + [button.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -inset)]
+    }
+
+    /// Fixed size, at the top of `view`'s safe area; the side comes from
+    /// `sideConstraint`.
+    static func sizeAndTopConstraints(for button: UIButton, in view: UIView) -> [NSLayoutConstraint] {
         [
             button.widthAnchor.constraint(equalToConstant: diameter),
             button.heightAnchor.constraint(equalToConstant: diameter),
             button.topAnchor.constraint(
                 equalTo: view.safeAreaLayoutGuide.topAnchor, constant: inset
             ),
-            button.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -inset),
         ]
+    }
+
+    /// Pins the button to an absolute edge — left or right regardless of the
+    /// app's layout direction, because the page decides which one.
+    static func sideConstraint(
+        for button: UIButton, in view: UIView, side: CloseButtonSide
+    ) -> NSLayoutConstraint {
+        switch side {
+        case .left:
+            return button.leftAnchor.constraint(equalTo: view.leftAnchor, constant: inset)
+        case .right:
+            return button.rightAnchor.constraint(equalTo: view.rightAnchor, constant: -inset)
+        }
     }
 }
 #endif

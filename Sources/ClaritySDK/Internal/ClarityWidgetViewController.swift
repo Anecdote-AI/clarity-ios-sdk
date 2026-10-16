@@ -17,6 +17,8 @@ final class ClarityWidgetViewController: UIViewController {
     private let sheetHeightFraction: Double
     private let autoFocusInput: Bool
     private let showNativeCloseButton: Bool
+    private var closeButtonSideConstraint: NSLayoutConstraint?
+    private let language: String?
     private unowned let engine: WidgetEngine
 
     /// Suppresses Dismissed/hidden reporting while swapping containers.
@@ -34,6 +36,7 @@ final class ClarityWidgetViewController: UIViewController {
         sheetHeightFraction: Double,
         autoFocusInput: Bool,
         showNativeCloseButton: Bool,
+        language: String?,
         engine: WidgetEngine
     ) {
         self.webView = webView
@@ -41,6 +44,7 @@ final class ClarityWidgetViewController: UIViewController {
         self.sheetHeightFraction = sheetHeightFraction
         self.autoFocusInput = autoFocusInput
         self.showNativeCloseButton = showNativeCloseButton
+        self.language = language
         self.engine = engine
         super.init(nibName: nil, bundle: nil)
         configurePresentationStyle()
@@ -63,21 +67,7 @@ final class ClarityWidgetViewController: UIViewController {
     }
 
     private func configureSheet(_ sheet: UISheetPresentationController) {
-        if #available(iOS 16.0, *) {
-            let fraction = sheetHeightFraction
-            sheet.detents = [
-                .custom(identifier: .init("clarity-fraction")) { context in
-                    context.maximumDetentValue * fraction
-                }
-            ]
-        } else {
-            // iOS 15: approximate with system detents — a custom pan-gesture
-            // sheet would reimplement keyboard avoidance, scrim and
-            // interactive dismissal for a shrinking OS cohort. Documented in
-            // the README.
-            sheet.detents = sheetHeightFraction <= Self.mediumDetentFractionCap
-                ? [.medium()] : [.large()]
-        }
+        sheet.detents = [fractionDetent]
         sheet.preferredCornerRadius = Self.sheetCornerRadius
         sheet.prefersGrabberVisible = false
         // iOS 26 renders sheets floating with small side insets at rest, yet
@@ -90,6 +80,41 @@ final class ClarityWidgetViewController: UIViewController {
             sheet.prefersPageSizing = true
         }
         sheet.prefersEdgeAttachedInCompactHeight = true
+    }
+
+    /// The sheet as the app sized it: [sheetHeightFraction] of the largest
+    /// sheet. iOS 15 has no custom detents and approximates with the system
+    /// ones — a custom pan-gesture sheet would reimplement keyboard
+    /// avoidance, scrim and interactive dismissal for a shrinking OS cohort.
+    /// Documented in the README.
+    private var fractionDetent: UISheetPresentationController.Detent {
+        if #available(iOS 16.0, *) {
+            let fraction = sheetHeightFraction
+            return .custom(identifier: Self.fractionDetentIdentifier) { context in
+                context.maximumDetentValue * fraction
+            }
+        }
+        return sheetHeightFraction <= Self.mediumDetentFractionCap ? .medium() : .large()
+    }
+
+    // MARK: - The room around the chat window
+
+    /// The page asked for the room around the chat window, or gave it back:
+    /// an html screen that takes the whole device raises the sheet to its
+    /// largest detent — the top of the screen, as far as a sheet goes on
+    /// iOS (the status bar stays, the dimmed host app behind it) — and lets
+    /// it drop back to the app's fraction when the screen collapses. In
+    /// place, the WebView attached throughout: replacing the container, the
+    /// way `show(mode:)` switches modes, took the widget off the screen for
+    /// the length of a presentation. A full-screen container has nothing
+    /// more to give, and does nothing.
+    func setRoomAroundChat(given: Bool) {
+        guard mode == .bottomSheet, let sheet = sheetPresentationController else { return }
+        let detent: UISheetPresentationController.Detent = given ? .large() : fractionDetent
+        sheet.animateChanges {
+            sheet.detents = [detent]
+            sheet.selectedDetentIdentifier = nil
+        }
     }
 
     override func viewDidLoad() {
@@ -151,9 +176,37 @@ final class ClarityWidgetViewController: UIViewController {
     }
 
     private func addCloseButton() {
-        let button = CloseButton.make(target: self, action: #selector(closeTapped))
+        let button = CloseButton.make(
+            target: self,
+            action: #selector(closeTapped),
+            accessibilityLabel: NativeStrings.text(.close, language: language)
+        )
         view.addSubview(button)
-        NSLayoutConstraint.activate(CloseButton.layoutConstraints(for: button, in: view))
+        NSLayoutConstraint.activate(CloseButton.sizeAndTopConstraints(for: button, in: view))
+        let hostIsRightToLeft = view.effectiveUserInterfaceLayoutDirection == .rightToLeft
+        placeCloseButton(
+            button,
+            side: CloseButtonSide.forPage(htmlDir: nil, hostIsRightToLeft: hostIsRightToLeft)
+        )
+        // The page is loaded before the container exists (pageLoaded gates the
+        // presentation), so its direction is already set: put the ✕ where the
+        // page's own close button is.
+        webView.evaluateJavaScript("document.documentElement.dir") { [weak self, weak button] value, _ in
+            guard let self, let button else { return }
+            self.placeCloseButton(
+                button,
+                side: CloseButtonSide.forPage(
+                    htmlDir: value as? String, hostIsRightToLeft: hostIsRightToLeft
+                )
+            )
+        }
+    }
+
+    private func placeCloseButton(_ button: UIButton, side: CloseButtonSide) {
+        closeButtonSideConstraint?.isActive = false
+        let constraint = CloseButton.sideConstraint(for: button, in: view, side: side)
+        constraint.isActive = true
+        closeButtonSideConstraint = constraint
     }
 
     @objc private func closeTapped() {
@@ -163,6 +216,8 @@ final class ClarityWidgetViewController: UIViewController {
     // MARK: - Header swipe-to-close (full screen)
 
     private static let mediumDetentFractionCap: Double = 0.55
+    private static let fractionDetentIdentifier =
+        UISheetPresentationController.Detent.Identifier("clarity-fraction")
     private static let sheetCornerRadius: CGFloat = 24
     private static let focusInputDelay: TimeInterval = 0.25
     private static let fallbackKeyboardAnimationDuration: Double = 0.25
@@ -363,19 +418,57 @@ final class ClarityWidgetViewController: UIViewController {
     /// from JS focus is restricted by WebKit; combined with
     /// becomeFirstResponder this works on current simulators — verified by
     /// the rigor e2e; downgraded to focus-only where the OS refuses.
+    ///
+    /// The widget now lands on Home, which has no composer: the customer
+    /// reaches it only after tapping into a conversation. So when there is no
+    /// composer yet, watch the page and focus it the moment one appears —
+    /// once per opening, and never after the widget closes.
     private func focusChatInput() {
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.focusInputDelay) { [weak self] in
             guard let self, WidgetHolder.presentedContainer === self else { return }
             self.webView.becomeFirstResponder()
-            self.webView.evaluateJavaScript(
-                "try { var el = document.querySelector('textarea,[contenteditable=\"true\"],input[type=\"text\"]');"
-                    + " if (el) el.focus(); } catch (e) {}",
-                completionHandler: nil
-            )
+            self.webView.evaluateJavaScript(Self.focusComposerScript, completionHandler: nil)
         }
     }
 
-    // MARK: - Dismissal paths
+    private func stopFocusingChatInput() {
+        webView.evaluateJavaScript(Self.stopFocusingComposerScript, completionHandler: nil)
+    }
+
+    private static let focusComposerScript = """
+        (function () {
+          try {
+            var previous = window.__clarityAutoFocusObserver;
+            if (previous) { previous.disconnect(); }
+            window.__clarityAutoFocusObserver = null;
+            var focus = function () {
+              var composer = document.querySelector('textarea');
+              if (!composer) { return false; }
+              composer.focus();
+              return true;
+            };
+            if (focus()) { return; }
+            var observer = new MutationObserver(function () {
+              if (focus()) {
+                observer.disconnect();
+                window.__clarityAutoFocusObserver = null;
+              }
+            });
+            observer.observe(document.documentElement, { childList: true, subtree: true });
+            window.__clarityAutoFocusObserver = observer;
+          } catch (e) {}
+        })()
+        """
+
+    private static let stopFocusingComposerScript = """
+        (function () {
+          try {
+            var observer = window.__clarityAutoFocusObserver;
+            if (observer) { observer.disconnect(); }
+            window.__clarityAutoFocusObserver = null;
+          } catch (e) {}
+        })()
+        """
 
     private func performLatchedClose() {
         guard !isModeSwitch else { return }
@@ -417,6 +510,11 @@ final class ClarityWidgetViewController: UIViewController {
 
     private func completeDismissal() {
         WidgetHolder.setCloseObserver(nil)
+        // A composer that appears while the widget is closed must not take
+        // focus: the watch is for this opening only.
+        if autoFocusInput {
+            stopFocusingChatInput()
+        }
         // Detach but never destroy: the WebView stays warm in the engine so
         // reopening is instant and the page's websocket keeps delivering.
         webView.removeFromSuperview()
