@@ -566,6 +566,7 @@ final class WidgetEngine: NSObject {
         pendingEvents.forEach { sendMessageToWebView($0) }
         pendingEvents.removeAll()
         sendDeviceTokenToWebView()
+        inAppTools.pageDidLoad()
         if let show = consumePendingShow() {
             presentContainer(
                 mode: show.mode, sheetHeightFraction: show.fraction, presenter: show.presenter
@@ -751,10 +752,62 @@ final class WidgetEngine: NSObject {
             openExternalLink(url)
         case .requestPresentation(let fullScreen):
             applyRequestedPresentation(fullScreen: fullScreen)
+        case .inAppToolCall(let callId, let name, let argumentsJSON, let timeoutMs):
+            debug("in-app tool: \(name) (\(callId))")
+            inAppTools.run(
+                callId: callId,
+                name: name,
+                arguments: JSONEncoding.object(from: argumentsJSON) ?? [:],
+                timeoutMs: timeoutMs
+            )
+        case .inAppSecurityCheck(let requestId, let tools):
+            debug("in-app security check for \(tools.count) step(s)")
+            inAppTools.securityCheck(requestId: requestId, tools: tools)
+        case .inAppToolsRejected(let rejected):
+            // The backend refused these declarations (the page also has them
+            // in its console, which this SDK does not forward).
+            rejected.forEach {
+                ClarityLog.log("registerTool: the platform refused \"\($0.name)\": \($0.reason)")
+            }
         case .unknown(let action):
             ClarityLog.log("Unknown action: \(action)")
         }
     }
+
+    // MARK: - In-app tools
+
+    /// Re-announces the host's tools to a loaded page after a (un)registration.
+    func announceInAppTools() {
+        inAppTools.toolsDidChange()
+    }
+
+    private lazy var inAppTools = InAppToolRunner(
+        registry: .shared,
+        send: { [weak self] message in MainThread.run { self?.sendMessageToWebView(message) } },
+        after: { milliseconds, block in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: block)
+        },
+        isPageLoaded: { [weak self] in self?.state == .loaded },
+        reveals: inAppReveals
+    )
+
+    /// Gets the chat out of the way: for a tool with a `reveal`, and for the
+    /// app's own `Clarity.stepAside`.
+    lazy var inAppReveals = InAppRevealCoordinator(
+        surface: { WidgetHolder.presentedContainer as? ClarityWidgetViewController },
+        after: { milliseconds, block in
+            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: block)
+        },
+        // Posted, not called: an answer given on the main thread is handed
+        // over at once, so the chat may come back inside the host's own
+        // `completion(…)`, and its listener should not run in the middle of it.
+        onAside: { [weak self] in
+            DispatchQueue.main.async { self?.notify { $0.onChatSteppedAside() } }
+        },
+        onReturned: { [weak self] in
+            DispatchQueue.main.async { self?.notify { $0.onChatReturned() } }
+        }
+    )
 
     /// The page asked for the room around the chat window, or gave it back.
     ///

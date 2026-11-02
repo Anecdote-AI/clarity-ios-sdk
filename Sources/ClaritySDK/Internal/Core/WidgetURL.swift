@@ -26,7 +26,7 @@ enum WidgetURL {
             ("nativeMode", ClarityPlatform.identifier),
             ("layout", "mobile"),
             ("placement", "right"),
-            ("identity", "unverified"),
+            ("identity", user.jwt == nil ? "unverified" : "verified"),
             // Same defaults the web embed snippet passes; the page maps
             // widgetType to the backend live_chat_type field and uses
             // organizationId for brand customization.
@@ -50,7 +50,7 @@ enum WidgetURL {
         if let email = user.email { params.append(("email", email)) }
         if let phone = user.phone { params.append(("phone", phone)) }
         if let avatar = user.avatar { params.append(("avatar", avatar)) }
-        if let userHash = user.userHash { params.append(("userHash", userHash)) }
+        if let userHash = user.legacyUserHash { params.append(("userHash", userHash)) }
         // Append order is frozen: user attributes before ticket attributes,
         // matching Android and the e2e-pinned URL shape.
         appendAttributes(userAttributes, scope: .user, to: &params)
@@ -58,7 +58,29 @@ enum WidgetURL {
         let query = params
             .map { "\($0.0)=\(FormURLEncoder.encode($0.1))" }
             .joined(separator: "&")
-        return "\(trimTrailingSlashes(config.baseUrl))/?\(query)"
+        let url = "\(trimTrailingSlashes(config.baseUrl))/?\(query)"
+        // The signed token the host's backend minted; the page forwards it to
+        // the session handshake, which is what makes the identity verified.
+        // It rides the FRAGMENT, never the query: WebKit never sends the
+        // fragment to the server, so the token stays out of the request line
+        // that nginx and the ingress write to their access logs (and a long
+        // one cannot overflow it into a 414). The page reads it from
+        // `location.hash` and strips it. Same spelling as Android.
+        guard let jwt = user.jwt else { return url }
+        return "\(url)#\(jwtFragmentName)=\(FormURLEncoder.encode(jwt))"
+    }
+
+    /// The fragment key the page reads the identity token from (live-chat
+    /// `identityTokenUrl.ts`) — same spelling as Android's `WidgetUrl.kt`.
+    static let jwtFragmentName = "jwt"
+
+    private static let redactedURLPrefixLength = 160
+
+    /// A URL as it may be logged: cut before the query — it can carry the
+    /// one-time token or, for attachment URLs, signed access credentials —
+    /// and before the fragment, which carries the identity token.
+    static func redactedForLog(_ absoluteURL: String) -> String {
+        String(absoluteURL.prefix { $0 != "?" && $0 != "#" }.prefix(redactedURLPrefixLength))
     }
 
     /// One scope's attributes as a JSON query param — omitted entirely when

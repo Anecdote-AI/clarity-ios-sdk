@@ -110,6 +110,63 @@ conversations can never leak between users. Re-identifying the **same
 `externalId`** with updated profile fields is a profile update — the
 conversation is kept. `Clarity.resetSession()` is the explicit logout.
 
+### Verify who the user is (signed identity)
+
+An `externalId` on its own is a claim the app makes about itself. To have
+Clarity trust it, your own backend signs a short-lived token for the logged-in
+user and the app hands that token to the SDK:
+
+```swift
+// 1. After login, ask YOUR backend for a Clarity token for this user.
+let token = try await myBackend.fetchClarityToken()
+
+// 2. Pass it along with the identity.
+Clarity.identify(ClarityUser(
+    externalId: user.id,
+    email: user.email,
+    jwt: token
+))
+```
+
+The SDK only carries the token to the chat; it never creates or inspects it.
+
+**Minting the token (on your backend)**
+
+- Sign a JWT with **HS256** using the channel's **identity secret**. Find the
+  secret in the cabinet, in your iOS SDK channel's settings under
+  **Identity verification**.
+- Claims: `user_id` (required, the same value you pass as `externalId`) and,
+  optionally, `email`, `phone`, `first_name`, `last_name`, `avatar` and
+  `custom_attributes`.
+- **Include `email` or `phone` only if your system has verified the user
+  controls them.** The chat is linked to any existing contact that already
+  holds that email or phone, including its history from other channels, so an
+  unverified or user-editable address could expose another person's support
+  history.
+- `exp` is required and must be at most 24 hours ahead. Keep it short and
+  issue a fresh token per login.
+- The payload is signed, not encrypted — the user can read it, so put nothing
+  in it you would not show them.
+- **Never put the secret in the app.** Anyone who can extract it from the
+  binary can impersonate any of your users. Only your backend holds it.
+- Rotating the secret in the cabinet keeps the previous secret valid for
+  7 days, so tokens already issued keep working while you roll the new one out.
+
+**Lifecycle**
+
+- When the token expires, fetch a new one and call `Clarity.identify` again
+  with the same `externalId` and the new `jwt`. The conversation is kept.
+- On logout call `Clarity.resetSession()`.
+- A token the platform rejects (invalid, expired, missing or malformed) is
+  reported through `onError` as `.pageLoadFailed` with `code` 401; the reason
+  is in the message.
+- In the same **Identity verification** section, turn on **Require a verified
+  identity** to refuse a session that states an `externalId` without a token. Turn it on once
+  every app version in the field sends a token.
+
+`ClarityUser.userHash` is **deprecated**. It was never verified by the
+platform; use `jwt` instead.
+
 ## 5. Open the chat
 
 ```swift
@@ -276,7 +333,89 @@ and iOS shows its standard permission prompt on first use. Without it the
 chat shows no microphone button at all, and any capture request is denied
 up front rather than letting iOS terminate your app.
 
-## 11. Errors — the SDK never crashes your app
+## 11. In-app tools (the agent acts inside your app)
+
+Your app declares what the support agent may do inside it — what each tool
+does, its arguments, and its kind — and supplies the code. A **read** changes
+nothing the customer sees, and the agent calls it when it needs the data. A
+**safe action** changes only what is on screen (opens a screen, scrolls): it
+runs at once, and the agent calls it only when the customer asks. An **action**
+changes the customer's data, money or settings: the customer taps Allow first,
+and the actions the agent asks for in one reply share one card and one Allow. Agents with
+**Tools from the customer's app** switched on in the cabinet are offered the
+tools while this customer chats.
+
+```swift
+Clarity.registerTool(ClarityTool(
+    name: "list_devices",
+    description: "Lists the devices signed in to the customer's account.",
+    kind: .read
+) { _, completion in
+    api.devices { result in
+        switch result {
+        case .success(let devices):
+            completion(.success(["devices": devices.map { ["id": $0.id, "name": $0.name] }]))
+        case .failure(let error):
+            completion(.failure(error.localizedDescription))
+        }
+    }
+})
+
+Clarity.registerTool(ClarityTool(
+    name: "remove_device",
+    description: "Signs a device out of the customer's account.",
+    kind: .action,
+    parameters: [
+        "type": "object",
+        "properties": ["device_id": ["type": "string", "description": "From list_devices"]],
+        "required": ["device_id"],
+    ]
+) { arguments, completion in
+    api.removeDevice(arguments["device_id"] as? String ?? "") { completion(.success(["removed": $0])) }
+})
+```
+
+- The handler runs on the main thread; call `completion` once, from any thread.
+- Return JSON-shaped values only (dictionaries, arrays, strings, numbers,
+  `Bool`, `nil`). Anything else becomes an error for the agent.
+- No answer within `timeoutSeconds` (20 s for a read, 30 s for a safe action or an action,
+  counted from Allow) is an error too. That time includes any confirmation of
+  your own: a handler that asks for Face ID or the passcode first should raise
+  `timeoutSeconds` (up to 90), or a customer who takes a moment gets "did not
+  finish in time".
+- The description and the result reach the agent as data from your app, never
+  as instructions or verified facts: authorize every change in your own API.
+- `registerTool` works before `initialize`; registering a name again replaces
+  the tool; `unregisterTool(_:)` removes it.
+- `registerTool` returns `false` and logs the reason for a declaration the
+  platform would refuse (property names must be lowercase with `_`, a subset
+  of JSON Schema, `timeoutSeconds` 1–90, the description at most 1000
+  characters). A refusal by the platform itself also reaches the log.
+- The handler runs on the main actor and the completion is `@Sendable`, so
+  both work in Swift 6 language mode.
+- A tool that opens a screen or highlights something does it behind the
+  chat. Give it `reveal: ClarityToolReveal(message: "Opening the screen…")`
+  and the chat steps aside while it runs (`.strip` drops the sheet to a strip
+  with the loader, `.fade` fades it out), then comes back after `holdAfter`.
+  Steps that follow one another keep it aside until the last one,
+  as long as each pauses after it answers (the default does). A
+  full-screen chat stays as it is.
+  To bring it back when your app is ready instead, set `waitForApp` and call `Clarity.bringChatBack()`; a pause, when set, wins. Your app
+  can also step the chat aside on its own with `Clarity.stepAside(message:style:)` /
+  `updateStepAside` / `bringChatBack`, and `ClarityListener` gets
+  `onChatSteppedAside` / `onChatReturned`.
+- An action can ask who holds the phone first: register it with
+  `requiresSecurityCheck: true` and set your check once with
+  `Clarity.setSecurityCheck { request, done in … }` (Face ID, the passcode,
+  your own PIN screen; call `done(true)` when it passed). When the customer
+  taps Allow on a card with such a tool, the check runs once for the whole
+  card, before any step; not passed (or no answer in 60 s) → nothing runs and
+  the card asks again. Only for `kind: .action`; a card that needs it while
+  none is set does not run.
+
+Full guide: <https://docs.support.onclarity.com/sdks/in-app-tools>.
+
+## 12. Errors — the SDK never crashes your app
 
 Every failure is classified into `ClarityError.kind` and delivered through
 `onError`:
@@ -300,7 +439,7 @@ they can fire.
 | Call | Purpose |
 |---|---|
 | `Clarity.initialize(config:)` / `updateConfig(_:)` / `config` | Lifecycle & runtime re-configuration |
-| `Clarity.identify(_:)` / `resetSession()` | Identity binding / logout |
+| `Clarity.identify(_:)` / `resetSession()` | Identity binding (incl. the signed `jwt`) / logout |
 | `Clarity.preload()` | Manual warm-up (with `autoPreload: false`) |
 | `Clarity.refresh()` | On-demand sync of ticket status + missed replies |
 | `Clarity.show(mode:sheetHeightFraction:)` / `dismiss()` | Presentation |
@@ -312,6 +451,8 @@ they can fire.
 | `Clarity.isClarityPush` / `handlePush` / `handleNotificationResponse` | Push & notification routing |
 | `Clarity.unreadCount` / `setListener(_:)` | New-message flag (1/0) & callbacks |
 | `Clarity.previewWidgetUrl(...)` | The exact widget URL the SDK would load (debugging) |
+| `Clarity.registerTool(_:)` / `unregisterTool(_:)` | Declare an in-app tool (`ClarityTool`) the support agent can call in your app / remove it |
+| `Clarity.setSecurityCheck(_:)` | Your check (Face ID, a passcode) run once when the customer allows a card with a `requiresSecurityCheck` tool |
 
 ## Troubleshooting
 
@@ -319,6 +460,10 @@ they can fire.
   means wrong `organizationId` / `integrationKey` / App ID (the channel's
   App ID must equal your bundle id); `.network` means the `baseUrl` host is
   unreachable from the device.
+- **The chat refuses to open after adding `jwt`** — `onError` carries the
+  reason in its message: the token is invalid (wrong secret or signature),
+  expired, missing or malformed. Check that your backend signs with the
+  channel's current identity secret and sets a valid `exp`.
 - **Replies while closed don't notify** — local notifications require your
   app to have asked for notification permission; the SDK never prompts.
 - **"Take Photo" does nothing** — add `NSCameraUsageDescription` to your

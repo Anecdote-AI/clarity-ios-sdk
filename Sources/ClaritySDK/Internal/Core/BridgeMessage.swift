@@ -36,7 +36,16 @@ enum BridgeMessage: Equatable {
     case openImage(url: String)
     case openLink(url: String)
     case requestPresentation(fullScreen: Bool)
+    /// Run an in-app tool the host app registered. `argumentsJSON` is the
+    /// arguments object re-encoded with sorted keys (keeps the enum Equatable).
+    case inAppToolCall(callId: String, name: String, argumentsJSON: String, timeoutMs: Int)
+    /// The backend refused some of the host's tool declarations.
+    case inAppToolsRejected([InAppToolRejection])
+    /// The customer allowed a card with a tool that needs the app's security check.
+    case inAppSecurityCheck(requestId: String, tools: [String])
     case unknown(action: String)
+
+    static let defaultInAppTimeoutMs = 20_000
 
     /// nil = unparseable (not JSON, no `action`, or a required field missing) —
     /// the caller logs and drops it, mirroring Android's catch around `fromJson`.
@@ -78,6 +87,29 @@ enum BridgeMessage: Equatable {
             return .requestPresentation(
                 fullScreen: (json["presentation"] as? String) == "fullScreen"
             )
+        case "inAppToolsRejected":
+            let entries = json["tools"] as? [[String: Any]] ?? []
+            return .inAppToolsRejected(entries.compactMap { entry in
+                guard let name = entry["name"] as? String else { return nil }
+                return InAppToolRejection(name: name, reason: entry["reason"] as? String ?? "refused")
+            })
+        case "inAppSecurityCheck":
+            guard let requestId = json["requestId"] as? String, !requestId.isEmpty else { return nil }
+            return .inAppSecurityCheck(
+                requestId: requestId,
+                tools: (json["tools"] as? [Any] ?? []).compactMap { $0 as? String }
+            )
+        case "inAppToolCall":
+            guard let callId = json["callId"] as? String, !callId.isEmpty,
+                  let name = json["name"] as? String
+            else { return nil }
+            let arguments = json["arguments"] as? [String: Any] ?? [:]
+            return .inAppToolCall(
+                callId: callId,
+                name: name,
+                argumentsJSON: JSONEncoding.objectString(arguments),
+                timeoutMs: intValue(json["timeoutMs"]) ?? defaultInAppTimeoutMs
+            )
         default:
             return .unknown(action: action)
         }
@@ -98,4 +130,10 @@ enum BridgeMessage: Equatable {
     private static func doubleValue(_ value: Any?) -> Double? {
         number(value)?.doubleValue
     }
+}
+
+/// One declaration the backend refused, and why.
+struct InAppToolRejection: Equatable {
+    let name: String
+    let reason: String
 }

@@ -27,6 +27,10 @@ public protocol ClarityListener: AnyObject {
     func onTicketStatusChanged(_ status: String)
     /// Unstructured progress trail (handshake, navigation, presentation…) for diagnostics.
     func onDebugEvent(_ event: String)
+    /// The chat stepped aside to show the app (`ClarityToolReveal`, `Clarity.stepAside`).
+    func onChatSteppedAside()
+    /// The chat came back after stepping aside.
+    func onChatReturned()
 }
 
 public extension ClarityListener {
@@ -38,4 +42,6 @@ public extension ClarityListener {
     func onUnreadCountChanged(_ count: Int) {}
     func onTicketStatusChanged(_ status: String) {}
     func onDebugEvent(_ event: String) {}
+    func onChatSteppedAside() {}
+    func onChatReturned() {}
 }

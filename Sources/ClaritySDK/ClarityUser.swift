@@ -1,17 +1,31 @@
 /// The identity the host app knows the current user by. All fields are
 /// optional — an empty `ClarityUser()` represents an anonymous visitor.
 ///
-/// `userHash` is the HMAC-SHA256 of `externalId` computed with the
-/// organization's verification secret **on the host's backend** — never ship
-/// the secret inside the app.
-public struct ClarityUser: Equatable, Sendable {
+/// To prove who the user is, set `jwt` to a token your own backend signs with
+/// the channel's identity secret (see the README). The SDK only carries the
+/// token to the widget — never ship the secret inside the app.
+public struct ClarityUser: Equatable, Sendable, CustomStringConvertible, CustomDebugStringConvertible {
     public var externalId: String?
     public var firstName: String?
     public var lastName: String?
     public var email: String?
     public var phone: String?
     public var avatar: String?
-    public var userHash: String?
+
+    /// A JWT your backend signs with the channel's identity secret. The SDK
+    /// only carries it — never embed the secret in the app.
+    public var jwt: String?
+
+    /// - Warning: Deprecated and not verified by the platform. Use `jwt`.
+    @available(*, deprecated, message: "Not verified by the platform. Use `jwt`.")
+    public var userHash: String? {
+        get { legacyUserHash }
+        set { legacyUserHash = newValue }
+    }
+
+    /// Backing storage, so the SDK itself can keep forwarding the deprecated
+    /// field to older integrations without tripping its own deprecation.
+    var legacyUserHash: String?
 
     public init(
         externalId: String? = nil,
@@ -20,6 +34,7 @@ public struct ClarityUser: Equatable, Sendable {
         email: String? = nil,
         phone: String? = nil,
         avatar: String? = nil,
+        jwt: String? = nil,
         userHash: String? = nil
     ) {
         self.externalId = externalId
@@ -28,8 +43,22 @@ public struct ClarityUser: Equatable, Sendable {
         self.email = email
         self.phone = phone
         self.avatar = avatar
-        self.userHash = userHash
+        self.jwt = jwt
+        self.legacyUserHash = userHash
     }
+
+    /// The token is a credential: it must not reach a log line or a crash
+    /// report through string interpolation of the user.
+    public var description: String {
+        let fields = [
+            externalId.map { "externalId: \($0)" },
+            email.map { "email: \($0)" },
+            jwt.map { _ in "jwt: <redacted>" },
+        ].compactMap { $0 }
+        return "ClarityUser(\(fields.joined(separator: ", ")))"
+    }
+
+    public var debugDescription: String { description }
 }
 
 extension ClarityUser {

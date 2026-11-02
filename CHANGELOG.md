@@ -1,5 +1,34 @@
 # Changelog
 
+## 1.4.0
+
+- **In-app tools.** `Clarity.registerTool(_:)` declares a `ClarityTool` (name,
+  description, kind — read, safe action or action —, parameters JSON Schema,
+  optional result schema and timeout) with the code that runs it; the support
+  agent can then call it inside your app. A read runs when the agent needs the
+  data, a safe action (open a screen) runs at once when the customer asks, and
+  an action asks the customer to Allow it first; the actions of one reply share
+  one Allow.
+  `unregisterTool(_:)` removes one. A declaration the platform would refuse is
+  refused at registration with the reason in the log. See "In-app tools" in the
+  README.
+  A tool with a `ClarityToolReveal` shows what it did: while it runs, the chat
+  steps aside (a strip, or a fade) with a loader, and comes back after a short
+  pause, or when the app calls `Clarity.bringChatBack()` (`waitForApp`). The
+  app can step the chat aside itself (`Clarity.stepAside`), and
+  `ClarityListener` gets `onChatSteppedAside` / `onChatReturned`.
+  An action registered with `requiresSecurityCheck: true` asks who holds the
+  phone once per card: `Clarity.setSecurityCheck(_:)` sets the app's check
+  (Face ID, a passcode, a PIN screen), which runs once when the customer taps
+  Allow, before any step; not passed → nothing runs and the card asks again.
+
+- **Verified user identity.** `ClarityUser` gains `jwt`: a token your own
+  backend signs with the channel's identity secret. The SDK carries it to the
+  chat, where the platform verifies it before trusting the `externalId`. See
+  "Verify who the user is" in the README. `ClarityUser.userHash` is deprecated:
+  it was never verified by the platform — use `jwt`. The secret itself must
+  never ship inside the app.
+
 ## 1.3.0
 
 - **The SDK's own strings speak the chat's language.** The notification title

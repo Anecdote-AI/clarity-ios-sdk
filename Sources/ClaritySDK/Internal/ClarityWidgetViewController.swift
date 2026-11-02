@@ -109,13 +109,42 @@ final class ClarityWidgetViewController: UIViewController {
     /// the length of a presentation. A full-screen container has nothing
     /// more to give, and does nothing.
     func setRoomAroundChat(given: Bool) {
-        guard mode == .bottomSheet, let sheet = sheetPresentationController else { return }
+        roomGiven = given
+        // While the chat is stepped aside for a tool, the strip owns the
+        // detents; the chat comes back at the size asked for meanwhile.
+        guard mode == .bottomSheet, reveal == nil, !revealStarting,
+              let sheet = sheetPresentationController else { return }
         let detent: UISheetPresentationController.Detent = given ? .large() : fractionDetent
         sheet.animateChanges {
             sheet.detents = [detent]
             sheet.selectedDetentIdentifier = nil
         }
     }
+
+    // MARK: - Stepping aside for an in-app tool (`ClarityToolReveal`)
+
+    private struct Reveal {
+        let style: ClarityToolReveal.Style
+        let cover: UIView
+        let label: UILabel
+        let detents: [UISheetPresentationController.Detent]
+    }
+
+    private var reveal: Reveal?
+    private var revealStarting = false
+    /// Bumped by every reveal start and by an end that came before it took
+    /// effect, so a late page answer cannot drop the sheet to a strip that
+    /// nothing would bring back.
+    private var revealToken = 0
+    private var roomGiven = false
+    /// The page's colour arrives from JavaScript; past this the strip uses
+    /// the system background rather than keep the chat in place.
+    private static let pageColorWait: TimeInterval = 0.3
+    private static let stripDetentIdentifier =
+        UISheetPresentationController.Detent.Identifier("clarity-reveal-strip")
+    private static let stripHeight: CGFloat = 110
+    private static let revealCoverFade: TimeInterval = 0.25
+    private static let revealSheetMove: TimeInterval = 0.4
 
     override func viewDidLoad() {
         super.viewDidLoad()
@@ -510,6 +539,9 @@ final class ClarityWidgetViewController: UIViewController {
 
     private func completeDismissal() {
         WidgetHolder.setCloseObserver(nil)
+        // A loader floating over the app must not outlive the chat.
+        reveal?.cover.removeFromSuperview()
+        reveal = nil
         // A composer that appears while the widget is closed must not take
         // focus: the watch is for this opening only.
         if autoFocusInput {
@@ -525,6 +557,241 @@ final class ClarityWidgetViewController: UIViewController {
             modeSwitchCompletion = nil
             completion?()
         }
+    }
+}
+
+// MARK: - Stepping aside for an in-app tool
+
+extension ClarityWidgetViewController: InAppRevealSurface {
+
+    /// Strip: a loader first covers the chat while the sheet stays put (so
+    /// nothing shifts on screen), then the sheet drops to a strip and the app
+    /// behind is undimmed. Fade: the sheet fades out in place and the loader
+    /// floats over the app. A full-screen chat has no app behind it to show.
+    func beginReveal(
+        style: ClarityToolReveal.Style,
+        message: String,
+        ready: @escaping () -> Void
+    ) -> Bool {
+        guard mode == .bottomSheet, reveal == nil, revealStarting == false,
+              sheetPresentationController != nil, view.window != nil
+        else { return false }
+        revealStarting = true
+        revealToken += 1
+        let token = revealToken
+        // Stepping aside, the chat drops the keyboard: it would cover the
+        // strip and the very screen the customer is meant to see.
+        webView.evaluateJavaScript(Self.blurScript, completionHandler: nil)
+        view.endEditing(true)
+        // The strip covers the chat in the colour the page shows, so stepping
+        // aside never flashes a different colour over the chat. Whichever
+        // comes first — the colour or the wait — starts the step-aside.
+        let start: (UIColor) -> Void = { [weak self] pageColor in
+            guard let self, self.revealStarting, token == self.revealToken else { return }
+            self.revealStarting = false
+            self.stepAside(style: style, message: message, pageColor: pageColor, ready: ready)
+        }
+        webView.evaluateJavaScript(Self.pageColorScript) { value, _ in
+            start((value as? String).flatMap(Self.color(css:)) ?? .systemBackground)
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.pageColorWait) {
+            start(.systemBackground)
+        }
+        return true
+    }
+
+    private func stepAside(
+        style: ClarityToolReveal.Style,
+        message: String,
+        pageColor: UIColor,
+        ready: @escaping () -> Void
+    ) {
+        guard let sheet = sheetPresentationController, let window = view.window else { return ready() }
+        let label = UILabel()
+        let cover = Self.loaderView(
+            label: label,
+            message: message,
+            floating: style == .fade,
+            background: style == .fade ? .secondarySystemBackground : pageColor
+        )
+        cover.alpha = 0
+        reveal = Reveal(style: style, cover: cover, label: label, detents: sheet.detents)
+        switch style {
+        case .strip:
+            view.addSubview(cover)
+            NSLayoutConstraint.activate([
+                cover.topAnchor.constraint(equalTo: view.topAnchor),
+                cover.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+                cover.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+                cover.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+            ])
+            view.layoutIfNeeded()
+            UIView.animate(withDuration: Self.revealCoverFade, animations: { cover.alpha = 1 }) { _ in
+                sheet.animateChanges {
+                    sheet.detents = [Self.stripDetent]
+                    sheet.largestUndimmedDetentIdentifier = Self.stripDetentIdentifier
+                }
+                DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealSheetMove, execute: ready)
+            }
+        case .fade:
+            window.addSubview(cover)
+            NSLayoutConstraint.activate([
+                cover.centerXAnchor.constraint(equalTo: window.centerXAnchor),
+                cover.bottomAnchor.constraint(
+                    equalTo: window.safeAreaLayoutGuide.bottomAnchor, constant: -24),
+            ])
+            window.layoutIfNeeded()
+            sheet.animateChanges {
+                sheet.largestUndimmedDetentIdentifier = undimmedIdentifier
+            }
+            // An invisible sheet must not take the taps meant for the app.
+            presentationController?.presentedView?.isUserInteractionEnabled = false
+            UIView.animate(withDuration: Self.revealSheetMove, animations: {
+                self.view.alpha = 0
+                cover.alpha = 1
+            }) { _ in ready() }
+        }
+    }
+
+    /// The background the page shows beside its content: from a point at the
+    /// chat's left edge, up the ancestors to the first opaque background.
+    private static let pageColorScript = """
+        (function () {
+          try {
+            var el = document.elementFromPoint(2, Math.round(window.innerHeight / 2));
+            while (el) {
+              var c = getComputedStyle(el).backgroundColor;
+              if (c && c !== 'transparent' && !/rgba\\([^)]*,\\s*0\\)$/.test(c)) { return c; }
+              el = el.parentElement;
+            }
+          } catch (e) {}
+          return '';
+        })()
+        """
+
+    private static let blurScript =
+        "(function(){try{var e=document.activeElement;if(e&&e.blur){e.blur();}}catch(x){}})()"
+
+    /// `rgb(r, g, b)` or `rgba(r, g, b, a)` as the page reports it.
+    static func color(css: String) -> UIColor? {
+        let numbers = css
+            .components(separatedBy: CharacterSet(charactersIn: "0123456789.").inverted)
+            .compactMap(Double.init)
+        guard numbers.count >= 3 else { return nil }
+        return UIColor(
+            red: numbers[0] / 255, green: numbers[1] / 255, blue: numbers[2] / 255,
+            alpha: numbers.count > 3 ? numbers[3] : 1
+        )
+    }
+
+    func updateReveal(message: String) {
+        reveal?.label.text = message
+    }
+
+    /// The way back, in the reverse order.
+    func endReveal() {
+        guard let current = reveal else {
+            // Ended before the step-aside took effect: call it off.
+            if revealStarting {
+                revealStarting = false
+                revealToken += 1
+            }
+            return
+        }
+        reveal = nil
+        let sheet = sheetPresentationController
+        switch current.style {
+        case .strip:
+            sheet?.animateChanges {
+                sheet?.detents = [roomGiven ? .large() : fractionDetent]
+                sheet?.largestUndimmedDetentIdentifier = nil
+                sheet?.selectedDetentIdentifier = nil
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + Self.revealSheetMove) {
+                UIView.animate(withDuration: Self.revealCoverFade, animations: {
+                    current.cover.alpha = 0
+                }) { _ in current.cover.removeFromSuperview() }
+            }
+        case .fade:
+            presentationController?.presentedView?.isUserInteractionEnabled = true
+            sheet?.animateChanges { sheet?.largestUndimmedDetentIdentifier = nil }
+            UIView.animate(withDuration: Self.revealSheetMove, animations: {
+                self.view.alpha = 1
+                current.cover.alpha = 0
+            }) { _ in current.cover.removeFromSuperview() }
+        }
+    }
+
+    /// The sheet's own detent, so a faded sheet leaves the app undimmed: the
+    /// custom fraction detent on iOS 16+, the system one it maps to on iOS 15.
+    private var undimmedIdentifier: UISheetPresentationController.Detent.Identifier {
+        if #available(iOS 16.0, *) {
+            return Self.fractionDetentIdentifier
+        }
+        return sheetHeightFraction <= Self.mediumDetentFractionCap ? .medium : .large
+    }
+
+    /// Dark text on a light background, light on a dark one.
+    private static func ink(on background: UIColor) -> UIColor {
+        UIColor { traits in
+            var red: CGFloat = 0, green: CGFloat = 0, blue: CGFloat = 0, alpha: CGFloat = 0
+            background.resolvedColor(with: traits).getRed(&red, green: &green, blue: &blue, alpha: &alpha)
+            let luminance = 0.2126 * red + 0.7152 * green + 0.0722 * blue
+            return luminance > 0.5 ? UIColor(white: 0.1, alpha: 1) : UIColor(white: 0.95, alpha: 1)
+        }
+    }
+
+    private static var stripDetent: UISheetPresentationController.Detent {
+        if #available(iOS 16.0, *) {
+            return .custom(identifier: stripDetentIdentifier) { _ in stripHeight }
+        }
+        return .medium()
+    }
+
+    /// A spinner and the message: covering the whole chat for the strip, a
+    /// floating pill for the fade.
+    private static func loaderView(
+        label: UILabel,
+        message: String,
+        floating: Bool,
+        background: UIColor
+    ) -> UIView {
+        let box = UIView()
+        box.translatesAutoresizingMaskIntoConstraints = false
+        box.backgroundColor = background
+        let ink = Self.ink(on: background)
+        let spinner = UIActivityIndicatorView(style: .medium)
+        spinner.color = ink
+        spinner.startAnimating()
+        label.text = message
+        label.font = .systemFont(ofSize: 16, weight: .medium)
+        label.textColor = ink
+        let row = UIStackView(arrangedSubviews: [spinner, label])
+        row.axis = .horizontal
+        row.spacing = 10
+        row.alignment = .center
+        row.translatesAutoresizingMaskIntoConstraints = false
+        box.addSubview(row)
+        if floating {
+            box.layer.cornerRadius = 22
+            box.layer.shadowColor = UIColor.black.cgColor
+            box.layer.shadowOpacity = 0.18
+            box.layer.shadowRadius = 12
+            box.layer.shadowOffset = CGSize(width: 0, height: 4)
+            NSLayoutConstraint.activate([
+                row.topAnchor.constraint(equalTo: box.topAnchor, constant: 12),
+                row.bottomAnchor.constraint(equalTo: box.bottomAnchor, constant: -12),
+                row.leadingAnchor.constraint(equalTo: box.leadingAnchor, constant: 18),
+                row.trailingAnchor.constraint(equalTo: box.trailingAnchor, constant: -18),
+            ])
+        } else {
+            NSLayoutConstraint.activate([
+                row.centerXAnchor.constraint(equalTo: box.centerXAnchor),
+                row.topAnchor.constraint(equalTo: box.topAnchor, constant: 34),
+                row.leadingAnchor.constraint(greaterThanOrEqualTo: box.leadingAnchor, constant: 16),
+            ])
+        }
+        return box
     }
 }
 

@@ -229,6 +229,43 @@ public enum Clarity {
         #endif
     }
 
+    // MARK: - Stepping the chat aside
+
+    /// The longest the chat waits for `bringChatBack()`, in seconds: past it
+    /// the chat comes back on its own.
+    public static let maxStepAsideSeconds = Double(InAppRevealCoordinator.signalWaitCapMs) / 1000
+
+    /// Steps the chat aside with a loader showing `message` — the way a tool
+    /// with a `ClarityToolReveal` does — so the customer sees your app, until
+    /// you call `bringChatBack()` (at most `maxStepAsideSeconds`). Does
+    /// nothing for a full-screen or closed chat. `message` is 1…80 characters.
+    public static func stepAside(message: String, style: ClarityToolReveal.Style = .strip) {
+        #if canImport(UIKit)
+        if let problem = InAppToolValidation.revealMessageProblem(message) {
+            ClarityLog.log("stepAside: \(problem)")
+            return
+        }
+        onEngine { $0.inAppReveals.appStepAside(style: style, message: message) }
+        #endif
+    }
+
+    /// Changes the loader's text while the chat is aside.
+    public static func updateStepAside(message: String) {
+        #if canImport(UIKit)
+        guard InAppToolValidation.revealMessageProblem(message) == nil else { return }
+        onEngine { $0.inAppReveals.appUpdate(message: message) }
+        #endif
+    }
+
+    /// Brings the chat back after `stepAside`, or after a tool whose reveal
+    /// waits for the app (`waitForApp`). A tool still running, or the pause
+    /// after one, keeps it aside until they end.
+    public static func bringChatBack() {
+        #if canImport(UIKit)
+        onEngine { $0.inAppReveals.bringChatBack() }
+        #endif
+    }
+
     /// True while the widget container is on screen. Main-thread confined,
     /// like the callbacks it mirrors (`onWidgetShown` / `onWidgetDismissed`).
     public static var isWidgetVisible: Bool {
@@ -329,6 +366,53 @@ public enum Clarity {
     public static func resetSession() {
         #if canImport(UIKit)
         onEngine { $0.resetSession() }
+        #endif
+    }
+
+    // MARK: - In-app tools
+
+    /// Declare an in-app tool and the code that runs it (see `ClarityTool`).
+    /// Agents with "Tools from the customer's app" switched on are offered
+    /// it. Works before `initialize`; registering the same name again
+    /// replaces the tool. Returns false (and logs why) for a tool that could
+    /// never be declared.
+    @discardableResult
+    public static func registerTool(_ tool: ClarityTool) -> Bool {
+        if let problem = InAppToolRegistry.problem(with: tool) {
+            ClarityLog.log("registerTool: \"\(tool.name)\" was not registered: \(problem)")
+            return false
+        }
+        InAppToolRegistry.shared.register(tool)
+        #if canImport(UIKit)
+        MainThread.run { controller.announceInAppTools() }
+        #endif
+        return true
+    }
+
+    /// Sets the app's security check — Face ID, a passcode, its own PIN
+    /// screen — or clears it with nil. When the customer taps Allow on a card
+    /// with a tool registered with `requiresSecurityCheck: true`, the SDK runs
+    /// it once for the whole card, before any step runs; the handlers then do
+    /// not check again. Not passed (or no answer within 60 s) → nothing runs
+    /// and the card asks again. A card that needs it while none is set does
+    /// not run.
+    ///
+    /// ```swift
+    /// Clarity.setSecurityCheck { request, done in
+    ///     let context = LAContext()
+    ///     context.evaluatePolicy(.deviceOwnerAuthentication,
+    ///                            localizedReason: "Confirm in Nimbus TV") { ok, _ in done(ok) }
+    /// }
+    /// ```
+    public static func setSecurityCheck(_ check: ClaritySecurityCheck?) {
+        InAppToolRegistry.shared.securityCheck = check
+    }
+
+    /// Stop implementing an in-app tool; the agent's calls get "unavailable".
+    public static func unregisterTool(_ name: String) {
+        guard InAppToolRegistry.shared.unregister(name) else { return }
+        #if canImport(UIKit)
+        MainThread.run { controller.announceInAppTools() }
         #endif
     }
 

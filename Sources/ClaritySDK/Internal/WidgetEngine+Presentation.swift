@@ -191,6 +191,7 @@ extension WidgetEngine {
             WidgetHolder.presentedContainer = nil
             guard !isModeSwitch else { return }
             WidgetHolder.closeRequested = false
+            inAppReveals.chatClosed()
             setWidgetVisible(false)
             notify { $0.onWidgetDismissed() }
         }

@@ -78,6 +78,99 @@ final class WidgetURLTests: XCTestCase {
         }
     }
 
+    /// Everything before the fragment: the request line WebKit sends, which
+    /// nginx and the ingress write to their access logs.
+    private func requestPart(_ url: String) -> String {
+        String(url.prefix { $0 != "#" })
+    }
+
+    private func fragment(_ url: String) -> String? {
+        url.firstIndex(of: "#").map { String(url[url.index(after: $0)...]) }
+    }
+
+    func testJwtRidesTheFragmentNotTheQuery() {
+        let user = ClarityUser(externalId: "u_8891", jwt: "header.payload.signature")
+
+        let url = build(makeTestConfig(), user: user)
+
+        XCTAssertEqual(fragment(url), "jwt=header.payload.signature", url)
+        XCTAssertFalse(requestPart(url).contains("header.payload.signature"), url)
+        XCTAssertFalse(requestPart(url).contains("jwt="), url)
+        XCTAssertTrue(url.contains("identity=verified"), url)
+        XCTAssertFalse(url.contains("identity=unverified"), url)
+        // Foundation agrees on where the query ends and the fragment starts.
+        let components = URLComponents(string: url)
+        XCTAssertEqual(components?.fragment, "jwt=header.payload.signature")
+        XCTAssertNil(components?.queryItems?.first { $0.name == "jwt" })
+    }
+
+    func testJwtInTheFragmentIsEncodedLikeEveryOtherValue() {
+        let url = build(makeTestConfig(), user: ClarityUser(jwt: "a+b/c=.d.e"))
+
+        XCTAssertEqual(fragment(url), "jwt=a%2Bb%2Fc%3D.d.e", url)
+        XCTAssertNotNil(URL(string: url), url)
+    }
+
+    func testJwtLeavesTheQueryExactlyAsWithoutIt() {
+        let config = makeTestConfig()
+        let without = build(config, user: ClarityUser(externalId: "u_8891"))
+            .replacingOccurrences(of: "identity=unverified", with: "identity=verified")
+        let with = build(config, user: ClarityUser(externalId: "u_8891", jwt: "h.p.s"))
+
+        XCTAssertEqual(requestPart(with), without)
+    }
+
+    func testAKilobyteSizedJwtKeepsTheRequestLineShort() {
+        let bigToken = "h." + String(repeating: "p", count: 10 * 1024) + ".s"
+
+        let url = build(makeTestConfig(), user: ClarityUser(jwt: bigToken))
+
+        XCTAssertLessThan(requestPart(url).count, 1024)
+        XCTAssertEqual(fragment(url), "jwt=\(bigToken)")
+    }
+
+    func testARefreshedJwtStillChangesTheURL() {
+        let config = makeTestConfig()
+        let first = build(config, user: ClarityUser(externalId: "u_8891", jwt: "old.token.value"))
+        let refreshed = build(config, user: ClarityUser(externalId: "u_8891", jwt: "new.token.value"))
+
+        XCTAssertNotEqual(first, refreshed)
+    }
+
+    func testWithoutJwtTheIdentityStaysUnverified() {
+        let url = build(makeTestConfig(), user: ClarityUser(externalId: "u_8891"))
+
+        XCTAssertTrue(url.contains("identity=unverified"), url)
+        XCTAssertFalse(url.contains("jwt="), url)
+        XCTAssertNil(fragment(url), url)
+    }
+
+    func testLoggedURLDropsTheQueryAndTheFragment() {
+        let url = build(makeTestConfig(), user: ClarityUser(jwt: "header.payload.signature"))
+
+        let logged = WidgetURL.redactedForLog(url)
+
+        XCTAssertEqual(logged, "https://chat.example.com/")
+        XCTAssertEqual(
+            WidgetURL.redactedForLog("https://chat.example.com/page#jwt=header.payload.signature"),
+            "https://chat.example.com/page"
+        )
+    }
+
+    func testChangingTheJwtAloneIsNotAnAccountSwitch() {
+        let first = ClarityUser(externalId: "u_8891", jwt: "old.token.value")
+        let refreshed = ClarityUser(externalId: "u_8891", jwt: "new.token.value")
+
+        XCTAssertFalse(first.requiresSessionIsolation(switchingTo: refreshed))
+    }
+
+    func testTheJwtNeverShowsUpInTheUserDescription() {
+        let user = ClarityUser(externalId: "u_8891", jwt: "header.payload.signature")
+
+        XCTAssertFalse("\(user)".contains("header.payload.signature"))
+        XCTAssertFalse(String(reflecting: user).contains("header.payload.signature"))
+    }
+
     func testAttributesAppendAsJsonObjects() {
         let url = build(
             makeTestConfig(),

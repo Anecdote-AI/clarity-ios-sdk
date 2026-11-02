@@ -253,16 +253,14 @@ extension WidgetEngine: WKUIDelegate {
 
 extension WidgetEngine {
 
-    private static let redactedURLPrefixLength = 160
-
     /// Query strings can carry the one-time token — or, for attachment URLs,
-    /// signed access credentials — never log them. Internal (not private to
-    /// this file): the bridge-action logs in WidgetEngine.swift use it too.
+    /// signed access credentials — and the widget URL's fragment carries the
+    /// identity token: never log either (`WidgetURL.redactedForLog`).
+    /// Internal (not private to this file): the bridge-action logs in
+    /// WidgetEngine.swift use it too.
     func redact(_ url: URL?) -> String {
         guard let url else { return "" }
-        let absolute = url.absoluteString
-        let cut = absolute.split(separator: "?", maxSplits: 1, omittingEmptySubsequences: false)
-        return String((cut.first ?? "").prefix(Self.redactedURLPrefixLength))
+        return WidgetURL.redactedForLog(url.absoluteString)
     }
 }
 #endif
