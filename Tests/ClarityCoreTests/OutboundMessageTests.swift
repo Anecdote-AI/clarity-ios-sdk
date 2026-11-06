@@ -64,6 +64,49 @@ final class OutboundMessageTests: XCTestCase {
         XCTAssertEqual(hidden["visible"] as? Bool, false)
     }
 
+    /// The page draws the bubble in the corner it is told, spelled as
+    /// `NativeSdkVoiceBubbleCorner` (Android's `voiceBubbleCorner`).
+    func testVoiceCallCollapsed() throws {
+        let collapsed = try parse(
+            OutboundMessage.voiceCallCollapsed(true, corner: .bottomEnd, onLeft: false)
+        )
+        XCTAssertEqual(collapsed["action"] as? String, "voiceCallCollapsed")
+        XCTAssertEqual(collapsed["collapsed"] as? Bool, true)
+        XCTAssertEqual(collapsed["corner"] as? String, "bottomEnd")
+        XCTAssertEqual(collapsed["side"] as? String, "right")
+
+        let opened = try parse(
+            OutboundMessage.voiceCallCollapsed(false, corner: .topStart, onLeft: true)
+        )
+        XCTAssertEqual(opened["collapsed"] as? Bool, false)
+        XCTAssertEqual(opened["corner"] as? String, "topStart")
+    }
+
+    func testStartVoiceCall() throws {
+        let message = try parse(
+            OutboundMessage.startVoiceCall(collapsed: true, corner: .topStart, onLeft: true)
+        )
+        XCTAssertEqual(message["action"] as? String, "startVoiceCall")
+        XCTAssertEqual(message["collapsed"] as? Bool, true)
+        XCTAssertEqual(message["corner"] as? String, "topStart")
+        XCTAssertEqual(message["side"] as? String, "left")
+    }
+
+    /// Regression: an LTR app with an Arabic chat put the aura on the inner
+    /// side. The page gets the screen edge the bubble is on, whatever the
+    /// corner's start and end.
+    func testTheSideIsTheScreenEdgeNotTheCorner() throws {
+        let rtlHost = try parse(
+            OutboundMessage.voiceCallCollapsed(true, corner: .bottomStart, onLeft: false)
+        )
+        XCTAssertEqual(rtlHost["corner"] as? String, "bottomStart")
+        XCTAssertEqual(rtlHost["side"] as? String, "right")
+    }
+
+    func testEndVoiceCall() throws {
+        XCTAssertEqual(try parse(OutboundMessage.endVoiceCall())["action"] as? String, "endVoiceCall")
+    }
+
     func testDeterministicOutput() {
         XCTAssertEqual(
             OutboundMessage.setAttributes(["b": "2", "a": "1"], scope: .user),

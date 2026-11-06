@@ -90,7 +90,8 @@ launch, so the first open is instant.
 Useful `ClarityConfig` knobs: `presentationMode` (default `.bottomSheet`),
 `sheetHeightFraction` (default 0.85, clamped 0.3–1.0), `autoFocusInput`,
 `autoPreload`, `loadTimeout`, `language`, `appId` (defaults to your bundle
-id; must match the channel's App ID).
+id; must match the channel's App ID), `voiceBubblePosition` (default
+`.bottomEnd`; see "Voice and dictation").
 
 ## 4. Identify the user (after your login)
 
@@ -333,6 +334,33 @@ and iOS shows its standard permission prompt on first use. Without it the
 chat shows no microphone button at all, and any capture request is denied
 up front rather than letting iOS terminate your app.
 
+During a voice call the chat's header has a collapse arrow: the chat gives
+the screen back to your app, and a bubble with the assistant's status waits
+in a corner (above your keyboard when it is up) while the call goes on.
+Your app keeps its keyboard and every touch outside the bubble; a tap on the
+bubble opens the call again, and so do the call ending and a question the
+assistant needs you to answer on screen. `ClarityConfig.voiceBubblePosition` picks the corner (`.topStart`,
+`.topEnd`, `.bottomStart`, `.bottomEnd` — the default; start and end follow
+the layout direction). The customer can drag the bubble anywhere (the grip
+on it says so); let go, it sticks to the nearer side. An in-app tool that
+shows something in your app during a call collapses the chat the same way
+instead of bringing it back. Your app's own `Clarity.stepAside` steps the chat
+aside as usual during a call, and you still hear `onChatSteppedAside` /
+`onChatReturned`. `Clarity.dismiss()` while the call is in the bubble ends the
+call: nothing would be left on screen to show it.
+
+To open the voice assistant straight away instead of the chat — from a "Talk
+to us" button, say — call:
+
+```swift
+Clarity.startVoiceCall()            // in the sheet
+Clarity.startVoiceCall(.bubble)     // collapsed from the start
+```
+
+The call starts in a conversation of the customer's; `.bubble` shows only the
+bubble over your app (iOS asks for the microphone the first time). On a
+channel without voice the chat opens instead.
+
 ## 11. In-app tools (the agent acts inside your app)
 
 Your app declares what the support agent may do inside it — what each tool
@@ -412,6 +440,11 @@ Clarity.registerTool(ClarityTool(
   card, before any step; not passed (or no answer in 60 s) → nothing runs and
   the card asks again. Only for `kind: .action`; a card that needs it while
   none is set does not run.
+- During a voice call, an action can put your app in view while it runs:
+  register it with `collapseCallOnAllow: true`, and once the customer taps
+  Allow the call folds back to its bubble while the steps run. Every step of
+  the card must have it set; a card with one step without it keeps the call
+  open. Only for `kind: .action`.
 
 Full guide: <https://docs.support.onclarity.com/sdks/in-app-tools>.
 

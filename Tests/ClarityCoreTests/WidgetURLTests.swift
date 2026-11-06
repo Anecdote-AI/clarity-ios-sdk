@@ -253,6 +253,15 @@ final class WidgetURLTests: XCTestCase {
         XCTAssertTrue(url.contains("&nativeCapabilities=microphone"))
     }
 
+    // The page offers to collapse a call only to an SDK that says it can, and
+    // a call needs the microphone: the two travel together, same spelling as
+    // Android's `WidgetUrlMicrophoneTest`.
+    func testVoiceCollapseIsAdvertisedWithTheMicrophone() {
+        let url = build(makeTestConfig(), microphoneAvailable: true)
+        XCTAssertTrue(url.contains("&nativeCapabilities=microphone%2CvoiceCollapse"))
+        XCTAssertFalse(build(makeTestConfig(), microphoneAvailable: false).contains("voiceCollapse"))
+    }
+
     func testMicrophoneCapabilityOmittedWhenNotProvisioned() {
         let url = build(makeTestConfig(), microphoneAvailable: false)
         XCTAssertFalse(url.contains("nativeCapabilities="))
@@ -261,6 +270,9 @@ final class WidgetURLTests: XCTestCase {
     func testMicrophoneCapabilityLeavesTheRestOfTheUrlAlone() {
         let without = build(makeTestConfig())
         let with = build(makeTestConfig(), microphoneAvailable: true)
-        XCTAssertEqual(with.replacingOccurrences(of: "&nativeCapabilities=microphone", with: ""), without)
+        XCTAssertEqual(
+            with.replacingOccurrences(of: "&nativeCapabilities=microphone%2CvoiceCollapse", with: ""),
+            without
+        )
     }
 }

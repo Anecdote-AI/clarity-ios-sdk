@@ -27,6 +27,8 @@ enum InAppToolValidation {
     /// Why the tool cannot be declared, or nil when it can.
     static let securityCheckKindProblem =
         "requiresSecurityCheck needs kind .action: only an action has a card to confirm on Allow"
+    static let collapseCallKindProblem =
+        "collapseCallOnAllow needs kind .action: only an action has a card to allow"
 
     static func problem(with tool: ClarityTool) -> String? {
         if !isName(tool.name) {
@@ -46,6 +48,9 @@ enum InAppToolValidation {
         }
         if tool.requiresSecurityCheck && tool.kind != .action {
             return securityCheckKindProblem
+        }
+        if tool.collapseCallOnAllow && tool.kind != .action {
+            return collapseCallKindProblem
         }
         if let problem = schemaProblem(tool.parameters, label: "parameters") {
             return problem

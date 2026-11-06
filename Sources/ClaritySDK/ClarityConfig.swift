@@ -41,6 +41,9 @@ public struct ClarityConfig: Equatable, Sendable {
     /// compiled. It never appears for a failed background pre-warm; only when a
     /// `show` was waiting.
     public var showDiagnosticsOnFailure: Bool?
+    /// The corner a collapsed voice call waits in (see
+    /// `ClarityVoiceBubblePosition`); default `.bottomEnd`.
+    public var voiceBubblePosition: ClarityVoiceBubblePosition
 
     public static let defaultSheetHeightFraction: Double = 0.85
     public static let defaultLoadTimeout: TimeInterval = 15
@@ -58,7 +61,8 @@ public struct ClarityConfig: Equatable, Sendable {
         autoPreload: Bool = true,
         showNativeCloseButton: Bool = false,
         loadTimeout: TimeInterval = defaultLoadTimeout,
-        showDiagnosticsOnFailure: Bool? = nil
+        showDiagnosticsOnFailure: Bool? = nil,
+        voiceBubblePosition: ClarityVoiceBubblePosition = .bottomEnd
     ) {
         self.organizationId = organizationId
         self.integrationKey = integrationKey
@@ -73,5 +77,6 @@ public struct ClarityConfig: Equatable, Sendable {
         self.showNativeCloseButton = showNativeCloseButton
         self.loadTimeout = loadTimeout
         self.showDiagnosticsOnFailure = showDiagnosticsOnFailure
+        self.voiceBubblePosition = voiceBubblePosition
     }
 }

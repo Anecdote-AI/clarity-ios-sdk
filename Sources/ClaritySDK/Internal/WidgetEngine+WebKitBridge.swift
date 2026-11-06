@@ -171,6 +171,13 @@ extension WidgetEngine: WKNavigationDelegate {
                     presented.presentingViewController,
                     "render recovery: re-presenting visible widget"
                 )
+            } else if let collapsed = collapsedCall {
+                // A call collapsed to its bubble died with the page: the
+                // chat it happened in comes back instead.
+                resume = (
+                    collapsed.mode, collapsed.fraction, collapsed.presenter,
+                    "render recovery: re-presenting collapsed voice call"
+                )
             } else {
                 resume = nil
             }

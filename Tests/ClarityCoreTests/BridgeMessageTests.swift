@@ -97,6 +97,31 @@ final class BridgeMessageTests: XCTestCase {
         )
     }
 
+    /// The payloads live chat sends during a voice call (`nativeSdkBridge.ts`);
+    /// the same literals as Android's `MessageActionTest.kt`.
+    func testTheVoiceCallReportsWhatTheAssistantIsDoing() {
+        assertParse(
+            #"{"action":"voiceCallStatus","state":"speaking","label":"Speaking"}"#,
+            .voiceCallStatus(state: "speaking", label: "Speaking")
+        )
+        assertParse(#"{"action":"collapseVoiceCall"}"#, .collapseVoiceCall)
+        assertParse(
+            #"{"action":"voiceBubbleSize","width":172,"height":84}"#,
+            .voiceBubbleSize(width: 172, height: 84)
+        )
+        assertParse(#"{"action":"expandVoiceCall"}"#, .expandVoiceCall)
+    }
+
+    /// A status without its fields is not a call: an empty state reads as no
+    /// call at all (`WidgetVoice`), never as a parse failure.
+    func testVoiceCallStatusDefaultsToEmptyFields() {
+        assertParse(#"{"action":"voiceCallStatus"}"#, .voiceCallStatus(state: "", label: ""))
+        assertParse(
+            #"{"action":"voiceCallStatus","state":"ended","label":42}"#,
+            .voiceCallStatus(state: "ended", label: "")
+        )
+    }
+
     func testUnknownActionPreserved() {
         assertParse(#"{"action":"somethingNew"}"#, .unknown(action: "somethingNew"))
     }

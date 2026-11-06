@@ -12,6 +12,8 @@ enum WidgetURL {
     /// `nativeSdkBridge.ts`) — same spelling as Android's `WidgetUrl.kt`.
     static let nativeCapabilitiesParam = "nativeCapabilities"
     static let microphoneCapability = "microphone"
+    /// This SDK can collapse a voice call to a bubble over the host app.
+    static let voiceCollapseCapability = "voiceCollapse"
 
     static func build(
         config: ClarityConfig,
@@ -40,8 +42,12 @@ enum WidgetURL {
         // carries NSMicrophoneUsageDescription, so the getUserMedia gate
         // prompts instead of denying). SDK builds that predate the param
         // never send it, so the page keeps voice and dictation hidden there.
+        // A call needs the microphone, so collapsing one is offered with it.
         if microphoneAvailable {
-            params.append((nativeCapabilitiesParam, microphoneCapability))
+            params.append((
+                nativeCapabilitiesParam,
+                "\(microphoneCapability),\(voiceCollapseCapability)"
+            ))
         }
         if let language = config.language { params.append(("language", language)) }
         if let externalId = user.externalId { params.append(("externalId", externalId)) }

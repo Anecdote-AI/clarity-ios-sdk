@@ -1,5 +1,33 @@
 # Changelog
 
+## 1.5.0
+
+- **A voice call collapses to a bubble.** The call's header has a collapse
+  arrow: the chat fades out and the call goes on in a bubble (the assistant's
+  aura and status) in a corner over the app, in a window that never takes the
+  app's keyboard or any touch outside the bubble. A tap on the bubble, the
+  call ending, or a card the customer must answer opens the call again.
+  `ClarityConfig.voiceBubblePosition` picks the corner. An in-app tool that
+  shows something during a call collapses the chat instead of stepping it
+  aside; the app's own `Clarity.stepAside` still steps it aside, with
+  `onChatSteppedAside` / `onChatReturned`.
+- **`Clarity.dismiss()` ends a call that is in the bubble.** Nothing would be
+  left on screen to show it; the host hears `onWidgetDismissed` as for any
+  close.
+- **A tool can fold the call back to its bubble.** `ClarityTool` gains
+  `collapseCallOnAllow`: during a voice call, once the customer allows a card
+  whose every step has it set, the call collapses to the bubble, so the app
+  is in view while the steps run. Only for `kind: .action`.
+- **The bubble can be dragged.** The customer drags it anywhere over the app;
+  let go, it sticks to the nearer side, clear of the bars and the keyboard. A
+  grip on the bubble says so; a tap still opens the call.
+- **The voice assistant straight away.** `Clarity.startVoiceCall(.sheet | .bubble)` opens a call
+  in the customer's conversation without the chat — in the sheet, or collapsed
+  to the bubble from the start. A channel without voice opens the chat.
+- **Fix:** a widget page that reloaded itself lost the app's in-app tools, and
+  every call the agent made came back "not available in the app". The tools,
+  attributes, push token and visibility are now sent again.
+
 ## 1.4.0
 
 - **In-app tools.** `Clarity.registerTool(_:)` declares a `ClarityTool` (name,

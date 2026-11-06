@@ -22,6 +22,15 @@ import Foundation
 ///    the screen holds it, `default` to go back to the presentation the host
 ///    app configured. A sheet bounds the page at its own height, and no CSS
 ///    inside the WebView reaches past it — only the container can.
+///  - `voiceCallStatus`        → what the voice assistant is doing in the page's
+///    call (`starting`, `listening`, `thinking`, `speaking`; `ended` once it is
+///    over), with the call's own words for it in the chat's language
+///  - `collapseVoiceCall`      → the customer pressed the call's collapse arrow
+///    (offered only to an SDK that advertises `voiceCollapse`)
+///  - `voiceBubbleSize`        → the collapsed call's bubble measured itself, in
+///    CSS points
+///  - `expandVoiceCall`        → the customer tapped the bubble, or a card came
+///    that the call must show
 ///
 /// Port of the Android SDK's `MessageAction.kt`; parsing defaults are kept
 /// identical (missing optional fields fall back rather than fail).
@@ -43,6 +52,14 @@ enum BridgeMessage: Equatable {
     case inAppToolsRejected([InAppToolRejection])
     /// The customer allowed a card with a tool that needs the app's security check.
     case inAppSecurityCheck(requestId: String, tools: [String])
+    /// What the voice assistant is doing in the page's call; `ended` once it is over.
+    case voiceCallStatus(state: String, label: String)
+    /// The customer pressed the call's collapse button.
+    case collapseVoiceCall
+    /// The collapsed call's bubble, as the page drew it, in CSS points.
+    case voiceBubbleSize(width: Int, height: Int)
+    /// The customer tapped the bubble, or a card came that the call must show.
+    case expandVoiceCall
     case unknown(action: String)
 
     static let defaultInAppTimeoutMs = 20_000
@@ -110,6 +127,20 @@ enum BridgeMessage: Equatable {
                 argumentsJSON: JSONEncoding.objectString(arguments),
                 timeoutMs: intValue(json["timeoutMs"]) ?? defaultInAppTimeoutMs
             )
+        case "voiceCallStatus":
+            return .voiceCallStatus(
+                state: json["state"] as? String ?? "",
+                label: json["label"] as? String ?? ""
+            )
+        case "collapseVoiceCall":
+            return .collapseVoiceCall
+        case "voiceBubbleSize":
+            return .voiceBubbleSize(
+                width: intValue(json["width"]) ?? 0,
+                height: intValue(json["height"]) ?? 0
+            )
+        case "expandVoiceCall":
+            return .expandVoiceCall
         default:
             return .unknown(action: action)
         }

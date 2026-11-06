@@ -60,7 +60,7 @@ final class WidgetEngine: NSObject {
     private var user = ClarityUser()
     private var deviceToken: String?
     private var attributes: [AttributeScope: [String: ClarityAttributeValue]] = [:]
-    private var pendingEvents: [String] = []
+    var pendingEvents: [String] = []
 
     /// True while the widget container is on screen.
     private var widgetVisible = false
@@ -80,10 +80,37 @@ final class WidgetEngine: NSObject {
     /// host owns its controllers.
     weak var pendingPresenter: UIViewController?
 
+    /// The page's voice call, as it reports it (`voiceCallStatus`).
+    var voice = WidgetVoice()
+
+    /// The call collapsed to its bubble (`WidgetEngine+VoiceCall`); nil while
+    /// the chat is a sheet, or closed.
+    var collapsedCall: CollapsedVoiceCall?
+
+    /// Waits for the page to measure the bubble (`awaitBubbleSize`).
+    var bubbleSizeWaiter: (() -> Void)?
+
+    /// The edge the page was told to draw the bubble on before the bubble's
+    /// window was there (`showBubbleInPage`); the window corrects it.
+    var pageBubbleOnLeft: Bool?
+
+    /// The chat is coming back after a reload lost the call in the bubble
+    /// (`reopenAfterLostCall`): the host heard it shown, and no dismissal since.
+    var reopeningAfterLostCall = false
+
+    /// `startVoiceCall` before the page loaded: the call starts with it.
+    var pendingVoiceStart: ClarityVoicePresentation?
+
+    /// The host heard the chat step aside, so it hears it come back.
+    var hostHeardAside = false
+
     // MARK: - Lifecycle
 
     func initialize(config: ClarityConfig) {
         self.config = config
+        // Where the app's keyboard is, from now on: a bubble that comes up
+        // while it is already open stays clear of it.
+        KeyboardWatch.start()
         auditHostAppProvisioning()
         schedulePreloadIfEnabled()
     }
@@ -156,10 +183,18 @@ final class WidgetEngine: NSObject {
     func show(
         mode: PresentationMode,
         sheetHeightFraction: Double?,
-        presenter: UIViewController? = nil
+        presenter: UIViewController? = nil,
+        keepingVoiceStart: Bool = false
     ) {
+        // The last command wins: a call asked for while loading is off.
+        if !keepingVoiceStart { pendingVoiceStart = nil }
         switch state {
         case .loaded:
+            // A collapsed call is the widget on screen already: it opens again.
+            if collapsedCall != nil {
+                expandVoiceCall()
+                return
+            }
             presentContainer(
                 mode: mode, sheetHeightFraction: sheetHeightFraction, presenter: presenter
             )
@@ -177,6 +212,8 @@ final class WidgetEngine: NSObject {
 
     func dismiss() {
         WidgetHolder.closeRequested = true
+        // A call asked for while loading is off too.
+        pendingVoiceStart = nil
         // A show that is still loading is CANCELLED, not deferred: the
         // latch alone would not survive, because presentContainer clears it
         // ("a new presentation supersedes a stale close") and onPageLoaded
@@ -188,7 +225,7 @@ final class WidgetEngine: NSObject {
     /// Drop a staged show: mode, sheet fraction and pinned presenter always
     /// travel (and die) together — clearing only part of the triple would
     /// let a later show present with another request's leftovers.
-    private func clearPendingShow() {
+    func clearPendingShow() {
         pendingShowMode = nil
         pendingSheetFraction = nil
         pendingPresenter = nil
@@ -413,6 +450,7 @@ final class WidgetEngine: NSObject {
     }
 
     func resetWebView() {
+        pendingVoiceStart = nil
         loadTimeoutWork.cancel()
         loadGeneration += 1
         clearPendingShow()
@@ -445,6 +483,7 @@ final class WidgetEngine: NSObject {
         dying.navigationDelegate = nil
         dying.uiDelegate = nil
         WarmupHost.detach(dying)
+        endVoiceCall(tearingDown: dying)
         dying.removeFromSuperview()
     }
 
@@ -551,7 +590,7 @@ final class WidgetEngine: NSObject {
     }
 
     private func onPageLoaded() {
-        guard state != .loaded else { return }
+        guard state != .loaded else { return onPageReloaded() }
         loadTimeoutWork.cancel()
         state = .loaded
         debug("page: loaded, widget ready")
@@ -567,7 +606,14 @@ final class WidgetEngine: NSObject {
         pendingEvents.removeAll()
         sendDeviceTokenToWebView()
         inAppTools.pageDidLoad()
-        if let show = consumePendingShow() {
+        let voiceStart = pendingVoiceStart
+        pendingVoiceStart = nil
+        if voiceStart == .sheet {
+            sendMessageToWebView(startVoiceCallMessage(collapsed: false))
+        }
+        if voiceStart == .bubble {
+            startInBubble()
+        } else if let show = consumePendingShow() {
             presentContainer(
                 mode: show.mode, sheetHeightFraction: show.fraction, presenter: show.presenter
             )
@@ -606,6 +652,7 @@ final class WidgetEngine: NSObject {
         // Read before the reset below: whether anyone was waiting on a window
         // decides whether the developer diagnostic is presented at all.
         let showWasPending = pendingShowMode != nil
+        pendingVoiceStart = nil
         pendingShowMode = nil
         // The failed document is DISCARDED, not parked: WebKit does not abort
         // a timed-out load, so the instance can still fire pageLoaded later —
@@ -763,6 +810,15 @@ final class WidgetEngine: NSObject {
         case .inAppSecurityCheck(let requestId, let tools):
             debug("in-app security check for \(tools.count) step(s)")
             inAppTools.securityCheck(requestId: requestId, tools: tools)
+        case .voiceCallStatus(let state, let label):
+            voiceCallStatus(state: state, label: label)
+        case .collapseVoiceCall:
+            debug("voice: collapse requested")
+            collapseVoiceCallRequested()
+        case .voiceBubbleSize(let width, let height):
+            voiceBubbleMeasured(width: width, height: height)
+        case .expandVoiceCall:
+            expandVoiceCall()
         case .inAppToolsRejected(let rejected):
             // The backend refused these declarations (the page also has them
             // in its console, which this SDK does not forward).
@@ -801,11 +857,22 @@ final class WidgetEngine: NSObject {
         // Posted, not called: an answer given on the main thread is handed
         // over at once, so the chat may come back inside the host's own
         // `completion(…)`, and its listener should not run in the middle of it.
+        // A reveal during a call collapses the chat to its bubble, which is no
+        // step aside: the chat does not come back when the tool is done. The
+        // host hears neither, and never a return it did not hear leave.
         onAside: { [weak self] in
-            DispatchQueue.main.async { self?.notify { $0.onChatSteppedAside() } }
+            DispatchQueue.main.async {
+                guard let self, !self.voice.collapsed else { return }
+                self.hostHeardAside = true
+                self.notify { $0.onChatSteppedAside() }
+            }
         },
         onReturned: { [weak self] in
-            DispatchQueue.main.async { self?.notify { $0.onChatReturned() } }
+            DispatchQueue.main.async {
+                guard let self, self.hostHeardAside else { return }
+                self.hostHeardAside = false
+                self.notify { $0.onChatReturned() }
+            }
         }
     )
 
@@ -854,7 +921,27 @@ final class WidgetEngine: NSObject {
         ExternalLinkOpener.open(parsed)
     }
 
-    private func sendMessageToWebView(_ message: String) {
+    /// The loaded page loaded again by itself (a dev server's reload, the
+    /// page's own recovery): it starts empty, so it hears again what its first
+    /// load was told. Without this the app's tools were gone, and every call
+    /// the agent made came back "not available in the app" (Android parity).
+    private func onPageReloaded() {
+        debug("page: reloaded")
+        // No call survives a reload; one that was a bubble opens as the chat.
+        voice.reset()
+        bubbleSizeWaiter = nil
+        if collapsedCall != nil { reopenAfterLostCall() }
+        for scope in AttributeScope.allCases {
+            if let stored = attributes[scope], !stored.isEmpty {
+                sendMessageToWebView(OutboundMessage.setAttributes(stored, scope: scope))
+            }
+        }
+        sendDeviceTokenToWebView()
+        inAppTools.pageDidLoad()
+        sendMessageToWebView(OutboundMessage.widgetVisibilityChanged(visible: widgetVisible))
+    }
+
+    func sendMessageToWebView(_ message: String) {
         guard let webView else { return }
         // The page opts in by assigning ClarityBridge.onMessage (same pattern
         // as the Android SDK); silently skip when it has not.

@@ -132,6 +132,11 @@ public struct ClarityTool {
     /// the customer taps Allow on a card with this tool, before any step
     /// runs. Only for `kind: .action` — a read or a safe action has no card.
     public let requiresSecurityCheck: Bool
+    /// During a voice call, the call folds back to its bubble once the
+    /// customer allows a card whose every step has this set (a card of this
+    /// one step included), so the app is in view while they run. A card with
+    /// one step without it keeps the call open. Only for `kind: .action`.
+    public let collapseCallOnAllow: Bool
     public let handler: ClarityToolHandler
 
     public init(
@@ -143,6 +148,7 @@ public struct ClarityTool {
         timeoutSeconds: Int? = nil,
         reveal: ClarityToolReveal? = nil,
         requiresSecurityCheck: Bool = false,
+        collapseCallOnAllow: Bool = false,
         handler: @escaping ClarityToolHandler
     ) {
         self.name = name
@@ -153,6 +159,7 @@ public struct ClarityTool {
         self.timeoutSeconds = timeoutSeconds
         self.reveal = reveal
         self.requiresSecurityCheck = requiresSecurityCheck
+        self.collapseCallOnAllow = collapseCallOnAllow
         self.handler = handler
     }
 }

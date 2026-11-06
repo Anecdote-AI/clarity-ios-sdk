@@ -16,10 +16,13 @@ extension WidgetEngine {
     private static let minSheetHeightFraction: Double = 0.3
     private static let maxSheetHeightFraction: Double = 1.0
 
+    /// `awaitsFirstFrame: false` skips the reveal gate, for a page that is
+    /// already painted (a voice call expanding from its bubble).
     func presentContainer(
         mode: PresentationMode,
         sheetHeightFraction: Double?,
-        presenter: UIViewController? = nil
+        presenter: UIViewController? = nil,
+        awaitsFirstFrame: Bool = true
     ) {
         guard let config, let webView else { return }
         // A new presentation supersedes any not-yet-consumed close (last
@@ -63,6 +66,7 @@ extension WidgetEngine {
         // Show-from-warm arrives with a windowless WebView (detached after
         // preload) — the reveal gate's rAF pair needs a window too.
         WarmupHost.attach(webView)
+        guard awaitsFirstFrame else { return present() }
 
         // Two-stage reveal: pageLoaded said the page is authenticated and
         // painted (double-rAF on the page side), but give the compositor one
@@ -165,18 +169,25 @@ extension WidgetEngine {
     }
 
     private func mountAndPresent(from presenter: UIViewController, _ request: PresentRequest) {
+        // Back from the bubble: the WebView waits in the bubble's window until
+        // the sheet is in one (never windowless, the call runs in it), and the
+        // customer was talking, not about to type.
+        let expandingVoiceCall = collapsedCall != nil
         let container = ClarityWidgetViewController(
             webView: request.webView,
             mode: request.mode,
             sheetHeightFraction: request.fraction,
-            autoFocusInput: request.config.autoFocusInput,
+            autoFocusInput: request.config.autoFocusInput && !expandingVoiceCall,
             showNativeCloseButton: request.config.showNativeCloseButton,
             language: request.config.language,
+            mountsWebViewInWindow: expandingVoiceCall,
             engine: self
         )
         WidgetHolder.presentedWebView = request.webView
         WidgetHolder.presentedContainer = container
-        presenter.present(container, animated: true)
+        // From the bubble the sheet fades in (the container does it), as it
+        // faded out: no slide.
+        presenter.present(container, animated: !expandingVoiceCall || request.mode == .fullScreen)
     }
 
     /// Called by the container when a dismissal fully completed. The
@@ -185,16 +196,38 @@ extension WidgetEngine {
     /// points from OUTSIDE the Clarity funnel and the wrapper is what makes
     /// the engine's main-confinement contract hold by construction rather
     /// than by every future caller remembering it.
-    func containerDidDismiss(isModeSwitch: Bool) {
+    ///
+    /// A sheet that collapsed to a voice call's bubble is no close either:
+    /// the widget is still open, as the bubble.
+    func containerDidDismiss(isModeSwitch: Bool, collapsedToBubble: Bool = false) {
         MainThread.run { [self] in
             WidgetHolder.presentedWebView = nil
             WidgetHolder.presentedContainer = nil
             guard !isModeSwitch else { return }
-            WidgetHolder.closeRequested = false
-            inAppReveals.chatClosed()
-            setWidgetVisible(false)
-            notify { $0.onWidgetDismissed() }
+            if collapsedToBubble, collapsedCall != nil {
+                voiceCallDidCollapse()
+                return
+            }
+            if collapsedToBubble {
+                // Closed (or reset) before the bubble was up: the widget
+                // closes, and the page draws the call again for next time.
+                voice.expand()
+                showBubbleInPage(false)
+            }
+            widgetDidClose()
         }
+    }
+
+    /// The widget is closed, whatever closed it: the host and the page learn
+    /// it, and nothing the chat held carries over to the next opening.
+    func widgetDidClose() {
+        WidgetHolder.closeRequested = false
+        reopeningAfterLostCall = false
+        // Opened again, the widget is the sheet, never a bubble.
+        voice.expand()
+        inAppReveals.chatClosed()
+        setWidgetVisible(false)
+        notify { $0.onWidgetDismissed() }
     }
 
     /// Called by the container once it is on screen. Ordering is the
@@ -203,11 +236,20 @@ extension WidgetEngine {
     /// `unreadCount` is already 0 — never a stale value mid-transition.
     /// Wrapped for the same reason as `containerDidDismiss` (inline no-op
     /// hop; the container calls on main).
-    func containerDidAppear() {
+    ///
+    /// A voice call expanding from its bubble reports nothing: the widget
+    /// never closed, and the host heard no dismissal. Nor does the chat that
+    /// comes back after a reload lost the call in the bubble.
+    func containerDidAppear(_ container: ClarityWidgetViewController) {
         MainThread.run { [self] in
             // Presentation reparented the WebView into the container; drop
             // the now-empty off-screen host.
             WarmupHost.releaseIfEmpty()
+            if finishVoiceExpand(into: container) { return }
+            if reopeningAfterLostCall {
+                reopeningAfterLostCall = false
+                return
+            }
             setWidgetVisible(true)
             notify { $0.onWidgetShown() }
         }

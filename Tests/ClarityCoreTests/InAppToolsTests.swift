@@ -62,7 +62,7 @@ final class InAppToolsTests: XCTestCase {
 
         XCTAssertEqual(
             registry.registeredMessage(),
-            #"{"action":"inAppToolsRegistered","securityCheck":[],"tools":[{"description":"Gets the plan","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"get_plan","resultSchema":{"type":"object"},"timeoutSeconds":10},{"description":"Lists devices","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"list_devices"}]}"#
+            #"{"action":"inAppToolsRegistered","collapseCallOnAllow":[],"securityCheck":[],"tools":[{"description":"Gets the plan","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"get_plan","resultSchema":{"type":"object"},"timeoutSeconds":10},{"description":"Lists devices","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"list_devices"}]}"#
         )
         XCTAssertTrue(registry.unregister("get_plan"))
         XCTAssertFalse(registry.unregister("get_plan"))

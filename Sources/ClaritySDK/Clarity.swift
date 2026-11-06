@@ -221,8 +221,23 @@ public enum Clarity {
     }
     #endif
 
+    /// Opens the voice assistant straight away: a call in the customer's
+    /// conversation, without them choosing it in the chat. `show()` opens the
+    /// chat; this opens the call. Needs voice enabled on the channel (without
+    /// it the chat opens) and `NSMicrophoneUsageDescription` in your
+    /// Info.plist (see "Voice and dictation").
+    ///
+    /// - Parameter presentation: in the chat's sheet, or collapsed to the
+    ///   bubble from the start.
+    public static func startVoiceCall(_ presentation: ClarityVoicePresentation = .sheet) {
+        #if canImport(UIKit)
+        onEngine { $0.startVoiceCall(presentation) }
+        #endif
+    }
+
     /// Dismiss the widget if it is on screen. The page keeps running warm so
-    /// reopening is instant and replies keep arriving.
+    /// reopening is instant and replies keep arriving. A voice call collapsed
+    /// to its bubble ends with it: nothing would be left on screen to show it.
     public static func dismiss() {
         #if canImport(UIKit)
         onEngine { $0.dismiss() }
@@ -238,7 +253,9 @@ public enum Clarity {
     /// Steps the chat aside with a loader showing `message` — the way a tool
     /// with a `ClarityToolReveal` does — so the customer sees your app, until
     /// you call `bringChatBack()` (at most `maxStepAsideSeconds`). Does
-    /// nothing for a full-screen or closed chat. `message` is 1…80 characters.
+    /// nothing for a full-screen or closed chat, or a voice call in its
+    /// bubble. During a call in the sheet the chat steps aside as usual.
+    /// `message` is 1…80 characters.
     public static func stepAside(message: String, style: ClarityToolReveal.Style = .strip) {
         #if canImport(UIKit)
         if let problem = InAppToolValidation.revealMessageProblem(message) {

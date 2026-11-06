@@ -9,11 +9,18 @@ final class InAppToolRevealTests: XCTestCase {
     /// asked to do and reports ready only when the test says so.
     private final class FakeChat: InAppRevealSurface {
         var events: [String] = []
+        var origins: [InAppRevealOrigin] = []
         var canStepAside = true
         var ready: (() -> Void)?
 
-        func beginReveal(style: ClarityToolReveal.Style, message: String, ready: @escaping () -> Void) -> Bool {
+        func beginReveal(
+            style: ClarityToolReveal.Style,
+            message: String,
+            origin: InAppRevealOrigin,
+            ready: @escaping () -> Void
+        ) -> Bool {
             guard canStepAside else { return false }
+            origins.append(origin)
             events.append("aside \(style == .strip ? "strip" : "fade"): \(message)")
             self.ready = ready
             return true
@@ -254,6 +261,20 @@ final class InAppToolRevealTests: XCTestCase {
 
         XCTAssertEqual(harness.chat?.events, ["aside fade: Loading your plan…", "message: Almost there…", "back"])
         XCTAssertEqual(harness.notified, ["aside", "returned"])
+    }
+
+    /// The chat tells the app's step-aside from a tool's: during a voice call
+    /// only a tool's collapses the call (silently), the app's steps aside and
+    /// the app hears it (`WidgetVoice.revealStarting`).
+    func testTheChatKnowsWhoSteppedItAside() {
+        let app = Harness()
+        app.reveals.appStepAside(style: .strip, message: "Loading your plan…")
+        XCTAssertEqual(app.chat?.origins, [.app])
+
+        let tool = Harness()
+        tool.registry.register(screenTool("open_screen", message: "Opening your plan…") { _ in })
+        tool.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        XCTAssertEqual(tool.chat?.origins, [.tool])
     }
 
     func testBringingTheChatBackWaitsForAToolStillRunning() {

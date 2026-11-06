@@ -78,6 +78,7 @@ final class InAppToolRegistry {
             // Kept out of the declarations: the page asks for the check on
             // Allow, the backend never hears of it.
             "securityCheck": declared.filter(\.requiresSecurityCheck).map(\.name),
+            "collapseCallOnAllow": declared.filter(\.collapseCallOnAllow).map(\.name),
         ])
     }
 

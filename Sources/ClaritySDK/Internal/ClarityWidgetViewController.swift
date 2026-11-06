@@ -19,10 +19,19 @@ final class ClarityWidgetViewController: UIViewController {
     private let showNativeCloseButton: Bool
     private var closeButtonSideConstraint: NSLayoutConstraint?
     private let language: String?
+    /// Mount the WebView only once this container's view is in a window: it
+    /// comes from a voice call's bubble, where the call runs in it.
+    private let mountsWebViewInWindow: Bool
+    private var webViewMounted = false
     private unowned let engine: WidgetEngine
 
     /// Suppresses Dismissed/hidden reporting while swapping containers.
     private var isModeSwitch = false
+    /// Suppresses it too: the sheet is going, the voice call stays (as a bubble).
+    private var isCollapsingToBubble = false
+    /// A still of the call, left in a full-screen container whose WebView went
+    /// to the bubble, so the screen does not slide away blank.
+    private var collapseStill: UIView?
     private var modeSwitchCompletion: (() -> Void)?
     private var didAppearOnce = false
     private var keyboardObservers: [NSObjectProtocol] = []
@@ -37,6 +46,7 @@ final class ClarityWidgetViewController: UIViewController {
         autoFocusInput: Bool,
         showNativeCloseButton: Bool,
         language: String?,
+        mountsWebViewInWindow: Bool = false,
         engine: WidgetEngine
     ) {
         self.webView = webView
@@ -45,6 +55,7 @@ final class ClarityWidgetViewController: UIViewController {
         self.autoFocusInput = autoFocusInput
         self.showNativeCloseButton = showNativeCloseButton
         self.language = language
+        self.mountsWebViewInWindow = mountsWebViewInWindow
         self.engine = engine
         super.init(nibName: nil, bundle: nil)
         configurePresentationStyle()
@@ -146,11 +157,25 @@ final class ClarityWidgetViewController: UIViewController {
     private static let revealCoverFade: TimeInterval = 0.25
     private static let revealSheetMove: TimeInterval = 0.4
 
+    override func loadView() {
+        let root = WindowReportingView()
+        if mountsWebViewInWindow {
+            root.onMovedToWindow = { [weak self] in self?.mountWebView() }
+        }
+        view = root
+    }
+
     override func viewDidLoad() {
         super.viewDidLoad()
         view.backgroundColor = .systemBackground
 
-        mountWebView()
+        // From the bubble, the WebView moves the moment the sheet's view
+        // enters a window: from one window to the other, never none. Before
+        // the first frame of the presentation, so the sheet never slides in
+        // empty.
+        if !mountsWebViewInWindow {
+            mountWebView()
+        }
         observeKeyboard()
 
         if mode == .fullScreen {
@@ -174,11 +199,17 @@ final class ClarityWidgetViewController: UIViewController {
     }
 
     private func mountWebView() {
+        guard !webViewMounted else { return }
+        webViewMounted = true
         // Reclaim from any previous hierarchy first — "already has a parent"
-        // must never crash a presentation (Android parity).
-        webView.removeFromSuperview()
+        // must never crash a presentation (Android parity). A mount from the
+        // bubble moves it straight across instead (see `mountsWebViewInWindow`).
+        if !mountsWebViewInWindow {
+            webView.removeFromSuperview()
+        }
         webView.translatesAutoresizingMaskIntoConstraints = false
-        view.addSubview(webView)
+        // Under everything: a mount from the bubble comes after the ✕.
+        view.insertSubview(webView, at: 0)
 
         // Full-screen respects the top safe area; the sheet is edge-to-edge
         // inside its own chrome.
@@ -429,11 +460,24 @@ final class ClarityWidgetViewController: UIViewController {
         super.present(viewControllerToPresent, animated: flag, completion: completion)
     }
 
+    override func viewWillAppear(_ animated: Bool) {
+        super.viewWillAppear(animated)
+        // From the bubble, presented without the slide: the sheet and its
+        // dimming fade in, as they faded out.
+        if mountsWebViewInWindow, mode == .bottomSheet, !didAppearOnce {
+            presentationController?.containerView?.alpha = 0
+        }
+    }
+
     override func viewDidAppear(_ animated: Bool) {
         super.viewDidAppear(animated)
         guard !didAppearOnce else { return }
         didAppearOnce = true
-        engine.containerDidAppear()
+        if mountsWebViewInWindow, mode == .bottomSheet,
+           let fading = presentationController?.containerView {
+            UIView.animate(withDuration: WidgetVoice.collapseFade) { fading.alpha = 1 }
+        }
+        engine.containerDidAppear(self)
         if autoFocusInput {
             focusChatInput()
         }
@@ -529,11 +573,119 @@ final class ClarityWidgetViewController: UIViewController {
         dismissAndComplete(animated: false)
     }
 
+    // MARK: - Collapsing a voice call to its bubble
+
+    /// Only a sheet that is fully on screen, with nothing over it, collapses
+    /// (a `dismiss` with an image preview up would close only the preview).
+    var canCollapseToBubble: Bool {
+        !isModeSwitch && !isCollapsingToBubble && presentingViewController != nil
+            && presentedViewController == nil
+            && !isBeingPresented && !isBeingDismissed && webViewMounted
+            && view.window?.windowScene != nil
+    }
+
+    /// The customer collapsed the call, or a tool is about to show something
+    /// during one: the sheet fades out in place (as a reveal's fade does), the
+    /// page turns into the call's bubble and measures it, then the WebView,
+    /// the call still in it, moves to the bubble's window and the sheet goes
+    /// without a further animation. `ready` (a reveal's) runs once the sheet is
+    /// out of sight, so the tool shows its screen to the customer.
+    func collapseToBubble(then ready: (() -> Void)? = nil) {
+        guard canCollapseToBubble, let scene = view.window?.windowScene else {
+            ready?()
+            return
+        }
+        isCollapsingToBubble = true
+        // The keyboard goes with the sheet.
+        webView.evaluateJavaScript(Self.blurScript, completionHandler: nil)
+        view.endEditing(true)
+        // Full screen: UIKit took the app's view away underneath, so a fade
+        // would go through black. The call moves to the bubble at once (hidden
+        // until the page has drawn it), and the screen slides away as it
+        // closes, showing a still of the call the WebView left it with.
+        if mode == .fullScreen {
+            if let still = webView.snapshotView(afterScreenUpdates: false) {
+                still.frame = webView.frame
+                view.insertSubview(still, belowSubview: webView)
+                collapseStill = still
+            }
+            engine.showBubbleInPage(true)
+            handOffToBubble(scene: scene, animated: true, waitForSize: true, then: ready)
+            return
+        }
+        let fading: UIView = presentationController?.containerView ?? view
+        presentationController?.presentedView?.isUserInteractionEnabled = false
+        UIView.animate(withDuration: WidgetVoice.collapseFade, animations: {
+            fading.alpha = 0
+        }) { [weak self] _ in
+            guard let self else {
+                ready?()
+                return
+            }
+            // The call ended, a card came, or the page reloaded while the
+            // sheet faded: there is no call to collapse any more, and the
+            // sheet comes back as it is.
+            guard self.engine.voice.collapsed else {
+                self.cancelCollapse(then: ready)
+                return
+            }
+            self.engine.showBubbleInPage(true)
+            self.engine.awaitBubbleSize { [weak self] in
+                guard let self else {
+                    ready?()
+                    return
+                }
+                self.handOffToBubble(scene: scene, animated: false, waitForSize: false, then: ready)
+            }
+        }
+    }
+
+    /// The WebView goes to the bubble's window and the sheet goes. A tool that
+    /// waits (`ready`, a reveal's) runs only once the sheet is gone: whatever
+    /// it presents is then presented from the app, not from this sheet, and
+    /// this dismissal cannot take it away.
+    private func handOffToBubble(
+        scene: UIWindowScene, animated: Bool, waitForSize: Bool, then ready: (() -> Void)?
+    ) {
+        // Closed meanwhile, something presented over the sheet (that a
+        // dismissal would close too), or no call left to collapse (it ended,
+        // a card came, the page reloaded while it measured the bubble):
+        // the collapse is off, and the call is drawn in the sheet again.
+        guard !isBeingDismissed, presentingViewController != nil, presentedViewController == nil,
+              engine.voice.collapsed
+        else {
+            engine.showBubbleInPage(false)
+            cancelCollapse(then: ready)
+            return
+        }
+        engine.voiceCallWillCollapse(
+            webView: webView,
+            scene: scene,
+            mode: mode,
+            fraction: sheetHeightFraction,
+            roomGiven: roomGiven,
+            presenter: presentingViewController,
+            waitForSize: waitForSize
+        )
+        dismissAndComplete(animated: animated, then: ready)
+    }
+
+    private func cancelCollapse(then ready: (() -> Void)?) {
+        isCollapsingToBubble = false
+        collapseStill?.removeFromSuperview()
+        collapseStill = nil
+        presentationController?.containerView?.alpha = 1
+        presentationController?.presentedView?.isUserInteractionEnabled = true
+        engine.voice.expand()
+        ready?()
+    }
+
     /// The tail every dismissal path shares; the paths keep their distinct
     /// guards and detach behavior above.
-    private func dismissAndComplete(animated: Bool) {
+    private func dismissAndComplete(animated: Bool, then done: (() -> Void)? = nil) {
         dismiss(animated: animated) { [weak self] in
             self?.completeDismissal()
+            done?()
         }
     }
 
@@ -549,9 +701,14 @@ final class ClarityWidgetViewController: UIViewController {
         }
         // Detach but never destroy: the WebView stays warm in the engine so
         // reopening is instant and the page's websocket keeps delivering.
-        webView.removeFromSuperview()
+        // Only from here: collapsed, it is in the bubble's window by now.
+        if webView.superview === view {
+            webView.removeFromSuperview()
+        }
         let wasModeSwitch = isModeSwitch
-        engine.containerDidDismiss(isModeSwitch: wasModeSwitch)
+        engine.containerDidDismiss(
+            isModeSwitch: wasModeSwitch, collapsedToBubble: isCollapsingToBubble
+        )
         if wasModeSwitch {
             let completion = modeSwitchCompletion
             modeSwitchCompletion = nil
@@ -571,11 +728,23 @@ extension ClarityWidgetViewController: InAppRevealSurface {
     func beginReveal(
         style: ClarityToolReveal.Style,
         message: String,
+        origin: InAppRevealOrigin,
         ready: @escaping () -> Void
     ) -> Bool {
+        // Collapsed to the call's bubble there is no sheet to move: the tool
+        // runs and the app shows what it did, the bubble stays put.
         guard mode == .bottomSheet, reveal == nil, revealStarting == false,
+              !engine.voice.collapsed, !isCollapsingToBubble,
               sheetPresentationController != nil, view.window != nil
         else { return false }
+        // In a call a tool's reveal collapses the sheet to the bubble rather
+        // than stepping it aside, and it stays collapsed: two animations at
+        // once, or the sheet coming back over the app, is what this avoids.
+        // The app's own step-aside steps aside: the app brings the chat back.
+        if canCollapseToBubble, engine.voice.revealStarting(origin: origin) {
+            collapseToBubble(then: ready)
+            return true
+        }
         revealStarting = true
         revealToken += 1
         let token = revealToken
@@ -792,6 +961,19 @@ extension ClarityWidgetViewController: InAppRevealSurface {
             ])
         }
         return box
+    }
+}
+
+// MARK: - Window attachment
+
+/// The container's root view; reports entering a window (see
+/// `mountsWebViewInWindow`).
+private final class WindowReportingView: UIView {
+    var onMovedToWindow: (() -> Void)?
+
+    override func didMoveToWindow() {
+        super.didMoveToWindow()
+        if window != nil { onMovedToWindow?() }
     }
 }
 

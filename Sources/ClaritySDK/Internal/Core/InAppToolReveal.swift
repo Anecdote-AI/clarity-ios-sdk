@@ -1,12 +1,26 @@
 import Foundation
 
+/// Who gets the chat out of the way. During a voice call a tool's reveal
+/// collapses the call to its bubble, silently: the chat does not come back
+/// when the tool is done. The app's own `Clarity.stepAside` steps the chat
+/// aside as it always has, and the app hears it leave and come back.
+enum InAppRevealOrigin: Equatable {
+    case tool
+    case app
+}
+
 /// The chat window's side of a reveal. The widget's view controller is the
 /// real one; the tests use a fake.
 protocol InAppRevealSurface: AnyObject {
     /// Steps the chat aside and calls `ready` once it is out of the way.
     /// False when it cannot (a full-screen chat has no app behind it), and
     /// then `ready` is never called.
-    func beginReveal(style: ClarityToolReveal.Style, message: String, ready: @escaping () -> Void) -> Bool
+    func beginReveal(
+        style: ClarityToolReveal.Style,
+        message: String,
+        origin: InAppRevealOrigin,
+        ready: @escaping () -> Void
+    ) -> Bool
     /// A new loader text, while the chat is aside.
     func updateReveal(message: String)
     /// Brings the chat back.
@@ -17,8 +31,8 @@ protocol InAppRevealSurface: AnyObject {
 /// when nothing does. A hold is a tool running, the pause after one, or a
 /// wait for the app's `Clarity.bringChatBack()` (after a tool with
 /// `waitForApp`, or the app's own `Clarity.stepAside`). The first to step the
-/// chat aside sets its style; later ones only change the loader text. Main
-/// thread only.
+/// chat aside sets its style and origin; later ones only change the loader
+/// text. Main thread only.
 final class InAppRevealCoordinator {
 
     /// Long enough for any sheet animation: past it, a step-aside that never
@@ -78,7 +92,7 @@ final class InAppRevealCoordinator {
                 }
             }
         }
-        stepAside(style: reveal.style, message: reveal.message, then: start) { [weak self] in
+        stepAside(style: reveal.style, message: reveal.message, origin: .tool, then: start) { [weak self] in
             self?.release(hold)
             body {}
         }
@@ -103,7 +117,9 @@ final class InAppRevealCoordinator {
     func appStepAside(style: ClarityToolReveal.Style, message: String) {
         let hold = addHold(Hold(kind: .untilSignal))
         after(Self.signalWaitCapMs) { [weak self] in self?.release(hold) }
-        stepAside(style: style, message: message, then: nil) { [weak self] in self?.release(hold) }
+        stepAside(style: style, message: message, origin: .app, then: nil) { [weak self] in
+            self?.release(hold)
+        }
     }
 
     /// `Clarity.updateStepAside`: a new loader text, if the chat is aside.
@@ -152,6 +168,7 @@ final class InAppRevealCoordinator {
     private func stepAside(
         style: ClarityToolReveal.Style,
         message: String,
+        origin: InAppRevealOrigin,
         then start: (() -> Void)?,
         cannot: () -> Void
     ) {
@@ -173,7 +190,7 @@ final class InAppRevealCoordinator {
             let id = beginId
             phase = .steppingAside(beginId: id, waiting: start.map { [$0] } ?? [])
             current = surface
-            let began = surface.beginReveal(style: style, message: message) { [weak self] in
+            let began = surface.beginReveal(style: style, message: message, origin: origin) { [weak self] in
                 self?.becameAside(beginId: id)
             }
             guard began else {

@@ -40,6 +40,53 @@ enum OutboundMessage {
         payload(action: "widgetVisibilityChanged", fields: ["visible": visible])
     }
 
+    /// The call collapsed to its bubble in this corner (the page then draws
+    /// only the bubble), or opened again. Spelling: `NativeSdkVoiceBubbleCorner`.
+    ///
+    /// `side` is the screen edge the bubble is against (`onLeft`), for the
+    /// page: the chat's language may run the other way from the app, and the
+    /// app's own views may run the other way from the app's language.
+    static func voiceCallCollapsed(
+        _ collapsed: Bool, corner: ClarityVoiceBubblePosition, onLeft: Bool
+    ) -> String {
+        payload(
+            action: "voiceCallCollapsed",
+            fields: [
+                "collapsed": collapsed, "corner": pageCorner(corner),
+                "side": onLeft ? "left" : "right",
+            ]
+        )
+    }
+
+    /// The host app asked for the voice assistant straight away: the page opens
+    /// a conversation and starts a call in it, collapsed to the bubble in this
+    /// corner from the start when `collapsed`.
+    static func startVoiceCall(
+        collapsed: Bool, corner: ClarityVoiceBubblePosition, onLeft: Bool
+    ) -> String {
+        payload(
+            action: "startVoiceCall",
+            fields: [
+                "collapsed": collapsed, "corner": pageCorner(corner),
+                "side": onLeft ? "left" : "right",
+            ]
+        )
+    }
+
+    /// The host closed the widget while its call was a bubble: the call ends.
+    static func endVoiceCall() -> String {
+        payload(action: "endVoiceCall", fields: [:])
+    }
+
+    private static func pageCorner(_ position: ClarityVoiceBubblePosition) -> String {
+        switch position {
+        case .topStart: return "topStart"
+        case .topEnd: return "topEnd"
+        case .bottomStart: return "bottomStart"
+        case .bottomEnd: return "bottomEnd"
+        }
+    }
+
     /// Host-requested on-demand sync: the page refetches the conversation
     /// events, so the latest ticket state (status + any missed replies) flows
     /// through the normal reporting path.
@@ -52,7 +99,7 @@ enum OutboundMessage {
     /// and notification timing questions are answered by the order of the
     /// visibility flips against message delivery, and an action name alone
     /// cannot answer them.
-    private static let loggableFields = ["visible"]
+    private static let loggableFields = ["visible", "collapsed", "corner", "side"]
 
     /// The loggable form of a payload built above: the action name plus the
     /// allowlisted fields, and NOTHING else. The payloads carry the APNs device
