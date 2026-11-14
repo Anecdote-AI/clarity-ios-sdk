@@ -1,0 +1,278 @@
+{
+  "about" : "The declarations of every template with all groups on: siteUrl https://help.example.com, the three screens below, a navigator, a screen reloader and the location provider. Identical on Android and iOS (spec #2041, section 5).",
+  "screens" : [
+    {
+      "path" : "/orders",
+      "title" : "My orders"
+    },
+    {
+      "description" : "Items and delivery",
+      "path" : "/orders/{order_id}",
+      "title" : "One order"
+    },
+    {
+      "path" : "/profile/address",
+      "title" : "Delivery address"
+    }
+  ],
+  "tools" : [
+    {
+      "description" : "The app screen the customer is on, in one read: its path (when the app names its screens), title, main heading and language, the messages it shows them now (alerts, errors, dialogs, snackbars), the app's main screens you can open (menu_links), the links on the screen, its form fields (labels only, never what is typed in them) and its other buttons. Read it first for any question about the app or this screen; look in both lists before searching the website.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "read",
+      "name" : "read_page"
+    },
+    {
+      "description" : "Shows the customer where something is on the app screen they are on, without moving them to another screen: the chat steps aside, the screen scrolls to the button, link, field, heading or section with that name, the rest dims for a few seconds and your short note appears next to it. It never taps. Call it whenever your answer tells the customer to tap, open, read or find something on the current screen, in the same turn as the answer, not only when they ask \"where\": \"tap Help in the menu\" comes with show_on_page on \"Help\". Call it again for the next step. Never say you highlighted or showed something unless you called it in this turn.",
+      "inputSchema" : {
+        "properties" : {
+          "note" : {
+            "description" : "A short note shown next to it, e.g. \"Tap here to save\"",
+            "type" : "string"
+          },
+          "target" : {
+            "description" : "The visible name of the element, e.g. \"Save address\" or \"Cancelling a pack\"",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "target"
+        ],
+        "type" : "object"
+      },
+      "kind" : "safe_action",
+      "name" : "show_on_page"
+    },
+    {
+      "description" : "The whole visible text of the app screen the customer is on, as the app shows it now (up to 5000 characters), including their own account details on it, never what they typed into a field. Use it when read_page does not answer the question about this screen and the screen shows the customer's own data. The customer is asked to allow each read.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "action",
+      "name" : "get_page_text"
+    },
+    {
+      "description" : "Finds pages on the organization's website (help.example.com) when read_page does not have it. With query: links to the matching pages, from the website's own search when the app set one, otherwise by matching the words against the page addresses of its sitemap. Without query: the pages of its sitemap, to learn what the website has. Read a result with read_link.",
+      "inputSchema" : {
+        "properties" : {
+          "query" : {
+            "description" : "A few key words in the site’s language, e.g. \"returns\", not the customer’s whole question: a site’s search often finds only pages that hold every word. Leave it out to list the pages.",
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "kind" : "read",
+      "name" : "find_on_site"
+    },
+    {
+      "description" : "Reads a page of the organization's website (help.example.com) without opening it for the customer: its title, main text and schema.org data. It reads the public page, as a signed-out visitor sees it, never the customer's own account. A page drawn by JavaScript cannot be read this way; the result says so (readable: false).",
+      "inputSchema" : {
+        "properties" : {
+          "path" : {
+            "description" : "Path of the page on this site, e.g. /help/returns",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "path"
+        ],
+        "type" : "object"
+      },
+      "kind" : "read",
+      "name" : "read_link"
+    },
+    {
+      "description" : "Opens a screen of this app for the customer: it moves them away from the screen they are on. Only when the customer asks to be taken there (\"open it\", \"take me there\"), not when they ask how to get there. Use only a path from this list or from read_page's menu_links, never one you made up; fill a {placeholder} only with an id another tool gave you. The chat stays open, also during a voice call. Screens: /orders (My orders), /orders/{order_id} (One order: Items and delivery), /profile/address (Delivery address)",
+      "inputSchema" : {
+        "properties" : {
+          "path" : {
+            "description" : "Path of the app screen, from the list in this tool's description or read_page's menu_links, e.g. /orders",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "path"
+        ],
+        "type" : "object"
+      },
+      "kind" : "safe_action",
+      "name" : "open_link"
+    },
+    {
+      "description" : "The form on the current app screen: its standard fields (name, email, phone, address) in screen order, by type, with their label and whether they are filled; errors, the fields the screen marks as wrong now with the error it shows (any field, not only the standard ones); and buttons, the names of the buttons below the fields. It never returns what is in them. To show the customer a button or a field, call show_on_page with its name. customer_types_it lists fields only the customer types (passwords, cards, codes): never ask for their value in the chat. Use it to help with a form, or when the customer cannot send one.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "read",
+      "name" : "get_form"
+    },
+    {
+      "description" : "Scrolls the app screen to a form field and highlights it while you ask the customer about it. Help with a form one field at a time: focus a field, ask for its value, and say the customer can also type it into the highlighted field themselves and just tell you when done; then fill it with fill_form_fields and focus the next one. For a field in customer_types_it, focus it and ask the customer to type it themselves. In a voice call, spell an email or a phone number back and wait for a yes before filling it. Pass \"none\" when the form is done or the customer turns to something else.",
+      "inputSchema" : {
+        "properties" : {
+          "field" : {
+            "enum" : [
+              "name",
+              "given-name",
+              "family-name",
+              "organization",
+              "email",
+              "tel",
+              "street-address",
+              "address-line1",
+              "address-line2",
+              "address-level1",
+              "address-level2",
+              "postal-code",
+              "country-name",
+              "current-password",
+              "new-password",
+              "one-time-code",
+              "cc-name",
+              "cc-number",
+              "cc-exp",
+              "cc-exp-month",
+              "cc-exp-year",
+              "cc-csc",
+              "none"
+            ],
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "field"
+        ],
+        "type" : "object"
+      },
+      "kind" : "safe_action",
+      "name" : "focus_form_field"
+    },
+    {
+      "description" : "Puts values the customer gave you into standard fields of a form on the current screen: one field, or several when the customer gave several at once. To fill one field, pass field and value; for several, pass fields. Each value replaces the field’s whole content: to correct part of it (one word, one letter), send the full corrected value and keep what the customer did not change. In a voice call, before filling a value the customer spelled or dictated (name, email, phone, address), read it back, spelling it out, and fill it only after they say yes. It never submits the form: the customer checks it and sends it themselves. Returns still_empty, the fields left to ask about.",
+      "inputSchema" : {
+        "properties" : {
+          "field" : {
+            "enum" : [
+              "name",
+              "given-name",
+              "family-name",
+              "organization",
+              "email",
+              "tel",
+              "street-address",
+              "address-line1",
+              "address-line2",
+              "address-level1",
+              "address-level2",
+              "postal-code",
+              "country-name"
+            ],
+            "type" : "string"
+          },
+          "fields" : {
+            "items" : {
+              "properties" : {
+                "field" : {
+                  "enum" : [
+                    "name",
+                    "given-name",
+                    "family-name",
+                    "organization",
+                    "email",
+                    "tel",
+                    "street-address",
+                    "address-line1",
+                    "address-line2",
+                    "address-level1",
+                    "address-level2",
+                    "postal-code",
+                    "country-name"
+                  ],
+                  "type" : "string"
+                },
+                "value" : {
+                  "type" : "string"
+                }
+              },
+              "required" : [
+                "field",
+                "value"
+              ],
+              "type" : "object"
+            },
+            "type" : "array"
+          },
+          "value" : {
+            "type" : "string"
+          }
+        },
+        "type" : "object"
+      },
+      "kind" : "safe_action",
+      "name" : "fill_form_fields"
+    },
+    {
+      "description" : "Why the app may not work for the customer, in one read: their device, operating system and app version, language, time zone and local time, screen size, text size and dark mode, whether it is online and on which network, data and battery saver; what the device lets this app use (microphone, camera, location, notifications): granted, denied, prompt when the app will still ask, not_granted when Android cannot tell whether it was never asked or refused for good, not_declared when the app does not use it; how many microphones and cameras it sees; the errors the app reported since it started, and on Android how it last closed unexpectedly. Use it when something does not work for them: a screen, a button, a call, a camera, location or notifications.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "read",
+      "name" : "get_diagnostics"
+    },
+    {
+      "description" : "Reloads the app screen the customer is on: the app fetches its data again, for example after a fix or when the screen is stuck or out of date. Anything they typed on it and did not save may be lost. The chat stays open. Call it on its own, never together with other tools.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "action",
+      "name" : "reload_page"
+    },
+    {
+      "description" : "The customer’s location from their device: lat and lon, rounded to about 1 km. Call it when the customer asks about the nearest place or anything near them, and work out their city from lat and lon. Look up the addresses before you call it: when the customer has to allow it, the location reaches you in a later turn where you cannot look anything up. The message that comes with the card is one short sentence asking for their location: no list of places, no guess. Then answer exactly what they asked, in one or two sentences. \"Is there one in my city?\": \"Yes, in <city>: <address>.\" or \"No, the nearest is in <city>: <address>.\" \"Which is nearest?\": the ONE nearest by straight-line distance, with its address. Never list them all.",
+      "inputSchema" : {
+        "properties" : {
+
+        },
+        "type" : "object"
+      },
+      "kind" : "action",
+      "name" : "get_location",
+      "timeoutSeconds" : 60
+    },
+    {
+      "description" : "Presses a button, link or other control on the current screen for the customer, after they allow it. Use it when the customer asks you to press, save, submit, continue or open something. It never types: use fill_form_fields for text. If it fails, highlight the element with show_on_page and ask the customer to press it.",
+      "inputSchema" : {
+        "properties" : {
+          "target" : {
+            "description" : "The visible name of the button, link or control, e.g. \"Save profile\"",
+            "type" : "string"
+          }
+        },
+        "required" : [
+          "target"
+        ],
+        "type" : "object"
+      },
+      "kind" : "action",
+      "name" : "click_element"
+    }
+  ]
+}

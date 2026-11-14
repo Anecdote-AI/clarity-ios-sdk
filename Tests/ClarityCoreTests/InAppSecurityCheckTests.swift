@@ -64,7 +64,7 @@ final class InAppSecurityCheckTests: XCTestCase {
             done(true)
         }
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device", "remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device", "remove_device"], callIds: nil)
 
         XCTAssertEqual(asked, [["remove_device", "remove_device"]])
         XCTAssertEqual(harness.sent, [answer(true)])
@@ -76,7 +76,7 @@ final class InAppSecurityCheckTests: XCTestCase {
         _ = harness.register("remove_device", requiresSecurityCheck: true)
         harness.registry.securityCheck = { _, done in done(false) }
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"], callIds: nil)
 
         XCTAssertEqual(harness.sent, [answer(false)])
     }
@@ -89,7 +89,7 @@ final class InAppSecurityCheckTests: XCTestCase {
             done(true)
         }
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"], callIds: nil)
         harness.timers.forEach { $0.1() }
 
         XCTAssertEqual(harness.sent, [answer(false)])
@@ -101,7 +101,7 @@ final class InAppSecurityCheckTests: XCTestCase {
         var late: ((Bool) -> Void)?
         harness.registry.securityCheck = { _, done in late = done }
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"], callIds: nil)
         XCTAssertEqual(harness.sent, [])
         harness.timers[0].1()
         late?(true)
@@ -113,7 +113,7 @@ final class InAppSecurityCheckTests: XCTestCase {
         let harness = Harness()
         _ = harness.register("remove_device", requiresSecurityCheck: true)
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"], callIds: nil)
 
         XCTAssertEqual(harness.sent, [answer(false)])
     }
@@ -127,7 +127,7 @@ final class InAppSecurityCheckTests: XCTestCase {
             done(false)
         }
 
-        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"])
+        harness.runner.securityCheck(requestId: "r1", tools: ["remove_device"], callIds: nil)
 
         XCTAssertFalse(asked)
         XCTAssertEqual(harness.sent, [answer(true)])
@@ -136,10 +136,38 @@ final class InAppSecurityCheckTests: XCTestCase {
     func testTheRequestIsReadFromThePage() {
         let message = BridgeMessage.parse(#"{"action":"inAppSecurityCheck","requestId":"r1","tools":["remove_device",7]}"#)
 
-        guard case .inAppSecurityCheck(let requestId, let tools)? = message else {
+        guard case .inAppSecurityCheck(let requestId, let tools, let callIds)? = message else {
             return XCTFail("not parsed: \(String(describing: message))")
         }
         XCTAssertEqual(requestId, "r1")
         XCTAssertEqual(tools, ["remove_device"])
+        XCTAssertNil(callIds, "an older page sends no call ids")
+    }
+
+    /// Present but empty, or present but not a list, is not an older page:
+    /// it parses to a list (which then pairs up with no step), never to nil.
+    func testCallIdsThatArePresentAreNeverReadAsAbsent() {
+        for raw in [#"[]"#, #"null"#, #""c1""#] {
+            let message = BridgeMessage.parse(
+                #"{"action":"inAppSecurityCheck","requestId":"r1","tools":["remove_device"],"callIds":"# + raw + "}"
+            )
+            guard case .inAppSecurityCheck(_, _, let callIds)? = message else {
+                return XCTFail("not parsed: \(raw)")
+            }
+            XCTAssertEqual(callIds, [], raw)
+        }
+    }
+
+    func testTheStepCallIdsAreReadInStep() {
+        XCTAssertEqual(
+            BridgeMessage.parse(
+                #"{"action":"inAppSecurityCheck","requestId":"r1","tools":["remove_device","rename_device","remove_device"],"callIds":["c1",7,"c3"]}"#
+            ),
+            .inAppSecurityCheck(
+                requestId: "r1",
+                tools: ["remove_device", "rename_device", "remove_device"],
+                callIds: ["c1", "", "c3"]
+            )
+        )
     }
 }

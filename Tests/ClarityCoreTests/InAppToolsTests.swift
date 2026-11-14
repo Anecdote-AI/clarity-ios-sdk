@@ -8,25 +8,43 @@ final class InAppToolsTests: XCTestCase {
     func testACallDecodesWithSortedArguments() {
         XCTAssertEqual(
             BridgeMessage.parse(
-                #"{"action":"inAppToolCall","callId":"c1","name":"remove_device","arguments":{"z":1,"device_id":"tv-1"},"timeoutMs":60000}"#
+                #"{"action":"inAppToolCall","callId":"c1","name":"remove_device","kind":"action","arguments":{"z":1,"device_id":"tv-1"},"timeoutMs":60000}"#
             ),
             .inAppToolCall(
                 callId: "c1",
                 name: "remove_device",
+                kind: .action,
                 argumentsJSON: #"{"device_id":"tv-1","z":1}"#,
                 timeoutMs: 60000
             )
         )
     }
 
-    func testACallWithoutArgumentsOrTimeoutGetsDefaults() {
+    /// A page that does not say how it treated the call (or says something
+    /// this SDK does not know) claims the least: a read.
+    func testACallWithoutArgumentsTimeoutOrKindGetsDefaults() {
         XCTAssertEqual(
             BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"get_plan"}"#),
             .inAppToolCall(
-                callId: "c1", name: "get_plan", argumentsJSON: "{}",
+                callId: "c1", name: "get_plan", kind: .read, argumentsJSON: "{}",
                 timeoutMs: BridgeMessage.defaultInAppTimeoutMs
             )
         )
+    }
+
+    func testTheKindIsReadFromThePage() {
+        let kinds = ["read": ClarityToolKind.read, "safe_action": .safeAction, "action": .action, "ACTION": .read, "approve": .read]
+        for (raw, expected) in kinds {
+            let message = BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"get_plan","kind":"\#(raw)"}"#)
+            guard case .inAppToolCall(_, _, let kind, _, _, _)? = message else {
+                return XCTFail("not parsed: \(String(describing: message))")
+            }
+            XCTAssertEqual(kind, expected, raw)
+        }
+        let numeric = BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"get_plan","kind":2}"#)
+        guard case .inAppToolCall(_, _, .read, _, _, _)? = numeric else {
+            return XCTFail("a kind that is not a string must read as a read: \(String(describing: numeric))")
+        }
     }
 
     func testACallWithoutACallIdIsDropped() {
@@ -48,10 +66,9 @@ final class InAppToolsTests: XCTestCase {
         ClarityTool(name: name, description: description, kind: kind, parameters: parameters) { _, _ in }
     }
 
-    func testTheRegistryAnnouncesSortedDeclarations() {
+    func testTheRegistryAnnouncesTheDeclarations() {
         let registry = InAppToolRegistry()
 
-        XCTAssertTrue(registry.register(tool("list_devices", description: "Lists devices", kind: .read)))
         XCTAssertTrue(registry.register(ClarityTool(
             name: "get_plan",
             description: "Gets the plan",
@@ -59,6 +76,7 @@ final class InAppToolsTests: XCTestCase {
             resultSchema: ["type": "object"],
             timeoutSeconds: 10
         ) { _, _ in }))
+        XCTAssertTrue(registry.register(tool("list_devices", description: "Lists devices", kind: .read)))
 
         XCTAssertEqual(
             registry.registeredMessage(),
@@ -67,6 +85,58 @@ final class InAppToolsTests: XCTestCase {
         XCTAssertTrue(registry.unregister("get_plan"))
         XCTAssertFalse(registry.unregister("get_plan"))
         XCTAssertEqual(declaredNames(registry), ["list_devices"])
+    }
+
+    // Regression (ACX-2094): the declarations were sorted by name (and kept
+    // in a Dictionary, which has no order), which put the tools the app
+    // listed first at the end, and the agent stopped using them (1 of 12
+    // turns right on a replayed production turn, against 10 of 12 in the
+    // declared order).
+    func testTheDeclarationsKeepTheRegistrationOrder() {
+        let registry = InAppToolRegistry()
+
+        for name in ["show_on_page", "read_page", "list_devices", "get_plan", "a_last_one"] {
+            XCTAssertTrue(registry.register(tool(name)))
+        }
+
+        XCTAssertEqual(declaredNames(registry), ["show_on_page", "read_page", "list_devices", "get_plan", "a_last_one"])
+    }
+
+    func testRegisteringANameAgainKeepsItsPlace() {
+        let registry = InAppToolRegistry()
+        registry.register(tool("list_devices"))
+        registry.register(tool("get_plan", description: "Old"))
+        registry.register(tool("open_screen"))
+
+        registry.register(tool("get_plan", description: "New"))
+
+        XCTAssertEqual(declaredNames(registry), ["list_devices", "get_plan", "open_screen"])
+        let message = JSONEncoding.object(from: registry.registeredMessage()) ?? [:]
+        let tools = message["tools"] as? [[String: Any]] ?? []
+        XCTAssertEqual(tools.count, 3)
+        XCTAssertEqual(tools.count == 3 ? tools[1]["description"] as? String : nil, "New")
+    }
+
+    func testAToolPastTheBackendsCapIsLeftOutWithAWarning() {
+        var warnings: [String] = []
+        let registry = InAppToolRegistry(log: { warnings.append($0) })
+        let names = (1...InAppToolRegistry.maxDeclaredTools + 1).map { "tool_\($0)" }
+        names.forEach { registry.register(tool($0, kind: .read)) }
+
+        // The backend refuses a longer list as a whole: the first 32 go, the 33rd stays out.
+        XCTAssertEqual(InAppToolRegistry.maxDeclaredTools, 32)
+        XCTAssertEqual(declaredNames(registry), Array(names.prefix(32)))
+        XCTAssertEqual(warnings.count, 1)
+        XCTAssertTrue(warnings.first?.hasSuffix("left out: tool_33") == true, warnings.first ?? "")
+
+        // Said once, not on every announcement.
+        _ = declaredNames(registry)
+        XCTAssertEqual(warnings.count, 1)
+
+        // The 33rd is still registered: it is offered once another one goes.
+        registry.unregister("tool_1")
+        XCTAssertEqual(declaredNames(registry), Array(names.dropFirst()))
+        XCTAssertEqual(warnings.count, 1)
     }
 
     func testASafeActionIsDeclaredAsSuch() {
@@ -194,7 +264,7 @@ final class InAppToolsTests: XCTestCase {
     func testANameWithoutAHandlerIsAnsweredUnavailable() {
         let harness = Harness()
 
-        harness.runner.run(callId: "c1", name: "get_plan", arguments: [:], timeoutMs: 1000)
+        harness.runner.run(callId: "c1", name: "get_plan", kind: .action, arguments: [:], timeoutMs: 1000)
 
         XCTAssertEqual(harness.sent, [#"{"action":"inAppToolResult","callId":"c1","status":"unavailable"}"#])
     }
@@ -203,7 +273,7 @@ final class InAppToolsTests: XCTestCase {
         let harness = Harness()
         harness.registry.register(ClarityTool(name: "get_plan", description: "Gets the plan") { _, _ in })
 
-        harness.runner.run(callId: "c1", name: "get_plan", arguments: [:], timeoutMs: 500)
+        harness.runner.run(callId: "c1", name: "get_plan", kind: .action, arguments: [:], timeoutMs: 500)
         XCTAssertEqual(harness.timers.map(\.0), [500])
         harness.timers[0].1()
 
@@ -219,7 +289,7 @@ final class InAppToolsTests: XCTestCase {
             completion(.failure("late"))
         })
 
-        harness.runner.run(callId: "c1", name: "get_plan", arguments: ["id": "a"], timeoutMs: 500)
+        harness.runner.run(callId: "c1", name: "get_plan", kind: .action, arguments: ["id": "a"], timeoutMs: 500)
         harness.timers[0].1()
 
         XCTAssertEqual(received["id"] as? String, "a")

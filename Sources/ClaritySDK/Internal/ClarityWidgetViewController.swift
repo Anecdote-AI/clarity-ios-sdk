@@ -39,6 +39,12 @@ final class ClarityWidgetViewController: UIViewController {
     private var webViewBottomConstraint: NSLayoutConstraint?
     private var headerSwipeRecognizer: UIPanGestureRecognizer?
 
+    /// The chat covers the whole screen: nothing of the app is in view behind
+    /// it, so the templates that show something on the app's screen refuse.
+    var coversWholeScreen: Bool {
+        mode == .fullScreen && !engine.voice.collapsed && view.window != nil
+    }
+
     init(
         webView: WKWebView,
         mode: PresentationMode,

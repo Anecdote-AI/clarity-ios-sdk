@@ -47,11 +47,20 @@ enum BridgeMessage: Equatable {
     case requestPresentation(fullScreen: Bool)
     /// Run an in-app tool the host app registered. `argumentsJSON` is the
     /// arguments object re-encoded with sorted keys (keeps the enum Equatable).
-    case inAppToolCall(callId: String, name: String, argumentsJSON: String, timeoutMs: Int)
+    /// `kind` is how the chat treated the call: `.action` only after the
+    /// customer's Allow on a card; missing or unknown reads as `.read`.
+    /// `accentColor` is the chat's primary colour (CSS hex), which the
+    /// ready-made tools draw in; nil from a page that does not send it.
+    case inAppToolCall(
+        callId: String, name: String, kind: ClarityToolKind, argumentsJSON: String, timeoutMs: Int,
+        accentColor: String? = nil
+    )
     /// The backend refused some of the host's tool declarations.
     case inAppToolsRejected([InAppToolRejection])
-    /// The customer allowed a card with a tool that needs the app's security check.
-    case inAppSecurityCheck(requestId: String, tools: [String])
+    /// The customer allowed a card with a tool that needs the app's security
+    /// check. `callIds` are the card's step call ids in the order of `tools`;
+    /// nil only when the key is absent (a page that predates them).
+    case inAppSecurityCheck(requestId: String, tools: [String], callIds: [String]?)
     /// What the voice assistant is doing in the page's call; `ended` once it is over.
     case voiceCallStatus(state: String, label: String)
     /// The customer pressed the call's collapse button.
@@ -114,7 +123,12 @@ enum BridgeMessage: Equatable {
             guard let requestId = json["requestId"] as? String, !requestId.isEmpty else { return nil }
             return .inAppSecurityCheck(
                 requestId: requestId,
-                tools: (json["tools"] as? [Any] ?? []).compactMap { $0 as? String }
+                tools: (json["tools"] as? [Any] ?? []).compactMap { $0 as? String },
+                // Absent → nil (an older page). Present but not a list → []
+                // so the card gets no pass. Not compacted: a call id that is
+                // not a string stays in its place as "", which fails the
+                // whole card closed (`InAppCallGate.recordPass`).
+                callIds: json["callIds"].map { ($0 as? [Any] ?? []).map { $0 as? String ?? "" } }
             )
         case "inAppToolCall":
             guard let callId = json["callId"] as? String, !callId.isEmpty,
@@ -124,8 +138,10 @@ enum BridgeMessage: Equatable {
             return .inAppToolCall(
                 callId: callId,
                 name: name,
+                kind: .fromPage(json["kind"]),
                 argumentsJSON: JSONEncoding.objectString(arguments),
-                timeoutMs: intValue(json["timeoutMs"]) ?? defaultInAppTimeoutMs
+                timeoutMs: intValue(json["timeoutMs"]) ?? defaultInAppTimeoutMs,
+                accentColor: json["accentColor"] as? String
             )
         case "voiceCallStatus":
             return .voiceCallStatus(
@@ -144,6 +160,13 @@ enum BridgeMessage: Equatable {
         default:
             return .unknown(action: action)
         }
+    }
+
+    /// What the device log says about a message that did not parse: its size
+    /// only. The text may carry a tool call's arguments or the customer's
+    /// words, which never go to the log.
+    static func unparseableLogLine(_ raw: String) -> String {
+        "Failed to parse message (\(raw.utf8.count) bytes)"
     }
 
     /// JSONSerialization numbers arrive as NSNumber (with platform-dependent

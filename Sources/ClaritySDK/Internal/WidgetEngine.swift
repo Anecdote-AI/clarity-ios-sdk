@@ -108,6 +108,7 @@ final class WidgetEngine: NSObject {
 
     func initialize(config: ClarityConfig) {
         self.config = config
+        applyTemplates()
         // Where the app's keyboard is, from now on: a bubble that comes up
         // while it is already open stays clear of it.
         KeyboardWatch.start()
@@ -155,20 +156,26 @@ final class WidgetEngine: NSObject {
 
     func updateConfig(_ config: ClarityConfig) {
         guard self.config != config else { return }
+        // Only the ready-made tools changed: the page keeps running and
+        // hears the new list.
+        if let current = self.config, current.equalsIgnoringTemplates(config) {
+            self.config = config
+            applyTemplates()
+            return
+        }
         // A config that points at a different org/channel/stand starts a
         // different conversation — the cached status would otherwise keep
         // reporting the previous one's state until the new page happens
         // to emit a status. Presentation-only updates keep it.
-        let identityChanged = self.config.map {
-            $0.organizationId != config.organizationId
-                || $0.integrationKey != config.integrationKey
-                || $0.baseUrl != config.baseUrl
-                || $0.appId != config.appId
-        } ?? false
+        let identityChanged = self.config.map { $0.isAnotherConversation(than: config) } ?? false
         self.config = config
         if identityChanged {
             currentTicketStatus = nil
+            // An answer remembered for one org or channel (`rememberResult`)
+            // must not be replayed, without a card, to another.
+            forgetInAppSession()
         }
+        applyTemplates()
         resetWebView()
         schedulePreloadIfEnabled()
     }
@@ -255,6 +262,7 @@ final class WidgetEngine: NSObject {
         if previous.requiresSessionIsolation(switchingTo: user) {
             debug("identify: identity switched — clearing widget web session")
             wipeUserSession()
+            forgetInAppSession()
         } else if previous != ClarityUser() {
             // Same identity key (a profile update), or an anonymous
             // session gaining an identity (the platform merges the
@@ -359,6 +367,7 @@ final class WidgetEngine: NSObject {
     func resetSession() {
         user = ClarityUser()
         wipeUserSession()
+        forgetInAppSession()
         resetWebView()
     }
 
@@ -462,6 +471,7 @@ final class WidgetEngine: NSObject {
         state = .idle
         WidgetHolder.closeRequested = false
         if let dying { teardownWebViewInstance(dying) }
+        inAppTools.forgetSecurityPasses()
     }
 
     /// Detach and destroy one WebView instance: close the container if it is
@@ -799,17 +809,19 @@ final class WidgetEngine: NSObject {
             openExternalLink(url)
         case .requestPresentation(let fullScreen):
             applyRequestedPresentation(fullScreen: fullScreen)
-        case .inAppToolCall(let callId, let name, let argumentsJSON, let timeoutMs):
+        case .inAppToolCall(let callId, let name, let kind, let argumentsJSON, let timeoutMs, let accentColor):
             debug("in-app tool: \(name) (\(callId))")
+            TemplateRuntime.shared.accentColor = OverlayHost.color(hex: accentColor) ?? OverlayHost.defaultAccent
             inAppTools.run(
                 callId: callId,
                 name: name,
+                kind: kind,
                 arguments: JSONEncoding.object(from: argumentsJSON) ?? [:],
                 timeoutMs: timeoutMs
             )
-        case .inAppSecurityCheck(let requestId, let tools):
+        case .inAppSecurityCheck(let requestId, let tools, let callIds):
             debug("in-app security check for \(tools.count) step(s)")
-            inAppTools.securityCheck(requestId: requestId, tools: tools)
+            inAppTools.securityCheck(requestId: requestId, tools: tools, callIds: callIds)
         case .voiceCallStatus(let state, let label):
             voiceCallStatus(state: state, label: label)
         case .collapseVoiceCall:
@@ -837,15 +849,34 @@ final class WidgetEngine: NSObject {
         inAppTools.toolsDidChange()
     }
 
-    private lazy var inAppTools = InAppToolRunner(
-        registry: .shared,
-        send: { [weak self] message in MainThread.run { self?.sendMessageToWebView(message) } },
-        after: { milliseconds, block in
-            DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: block)
-        },
-        isPageLoaded: { [weak self] in self?.state == .loaded },
-        reveals: inAppReveals
-    )
+    private lazy var inAppTools: InAppToolRunner = {
+        let runner = InAppToolRunner(
+            registry: .shared,
+            send: { [weak self] message in MainThread.run { self?.sendMessageToWebView(message) } },
+            after: { milliseconds, block in
+                DispatchQueue.main.asyncAfter(deadline: .now() + .milliseconds(milliseconds), execute: block)
+            },
+            isPageLoaded: { [weak self] in self?.state == .loaded },
+            reveals: inAppReveals
+        )
+        // The ready-made tools take their pointer and field ring off the
+        // screen when the conversation moves on.
+        runner.willRun = { TemplateRuntime.shared.willRun($0) }
+        return runner
+    }()
+
+    /// The ready-made tools (`ClarityToolTemplates`) the config turns on.
+    private func applyTemplates() {
+        TemplateRuntime.shared.onChange = { [weak self] in self?.announceInAppTools() }
+        TemplateRuntime.shared.apply(config)
+    }
+
+    /// The remembered answers (`rememberResult`) belong to the conversation
+    /// and the person: a logout or another user forgets them.
+    private func forgetInAppSession() {
+        inAppTools.forgetRemembered()
+        TemplateRuntime.shared.reset()
+    }
 
     /// Gets the chat out of the way: for a tool with a `reveal`, and for the
     /// app's own `Clarity.stepAside`.

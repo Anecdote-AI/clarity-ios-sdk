@@ -13,6 +13,20 @@ enum HostCapabilities {
 
     static let cameraUsageKey = "NSCameraUsageDescription"
     static let microphoneUsageKey = "NSMicrophoneUsageDescription"
+    static let locationUsageKey = "NSLocationWhenInUseUsageDescription"
+
+    /// True when the host can ask for the location while in use: the
+    /// precondition for the `get_location` template.
+    static var locationProvisioned: Bool {
+        hasUsageDescription(locationUsageKey, in: Bundle.main.infoDictionary)
+    }
+
+    /// The app's own URL schemes (`CFBundleURLTypes` → `CFBundleURLSchemes`),
+    /// lowercased: a declared screen's deep link opens in the app only with one.
+    static func appURLSchemes(in info: [String: Any]?) -> Set<String> {
+        let types = info?["CFBundleURLTypes"] as? [[String: Any]] ?? []
+        return Set(types.flatMap { ($0["CFBundleURLSchemes"] as? [String]) ?? [] }.map { $0.lowercased() })
+    }
 
     /// True when the host app's Info.plist carries a non-empty
     /// `NSCameraUsageDescription` — the precondition for WebKit's

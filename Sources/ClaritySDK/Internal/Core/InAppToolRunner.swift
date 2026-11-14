@@ -12,6 +12,12 @@ final class InAppToolRunner {
     private let isPageLoaded: () -> Bool
     private let reveals: InAppRevealCoordinator?
     private let isMainThread: () -> Bool
+    private let gate: InAppCallGate
+    private let log: (String) -> Void
+    /// Runs on the main thread right before a tool's handler (never for a
+    /// remembered answer): the templates take their pointer and field ring
+    /// off the screen when the conversation moves on (`TemplateRuntime`).
+    var willRun: ((ClarityTool) -> Void)?
 
     init(
         registry: InAppToolRegistry,
@@ -19,7 +25,9 @@ final class InAppToolRunner {
         after: @escaping (Int, @escaping () -> Void) -> Void,
         isPageLoaded: @escaping () -> Bool,
         reveals: InAppRevealCoordinator? = nil,
-        isMainThread: @escaping () -> Bool = { Thread.isMainThread }
+        isMainThread: @escaping () -> Bool = { Thread.isMainThread },
+        gate: InAppCallGate = InAppCallGate(),
+        log: @escaping (String) -> Void = ClarityLog.log
     ) {
         self.registry = registry
         self.send = send
@@ -27,6 +35,14 @@ final class InAppToolRunner {
         self.isPageLoaded = isPageLoaded
         self.reveals = reveals
         self.isMainThread = isMainThread
+        self.gate = gate
+        self.log = log
+    }
+
+    /// The conversation is gone (the web view was reset): no security check
+    /// passed in it may cover a call that comes later.
+    func forgetSecurityPasses() {
+        gate.reset()
     }
 
     /// The page is up: it hears every tool registered so far, including the
@@ -42,17 +58,63 @@ final class InAppToolRunner {
     }
 
     /// Runs one call on the main thread and always answers it: no handler →
-    /// unavailable, no answer in time → handler_timeout. Only the tool name
-    /// and the call id may be logged — arguments and results may carry the
-    /// customer's data.
-    func run(callId: String, name: String, arguments: [String: Any], timeoutMs: Int) {
-        guard let handler = registry.handler(for: name) else {
+    /// unavailable, no answer in time → handler_timeout. A tool whose answer
+    /// is remembered (`rememberResult`) answers with it at once, before any
+    /// other check and without its handler: it is declared as a read now, so
+    /// the call arrives as a read, below the action the tool was registered
+    /// as, and must not become kind_mismatch. Then the SDK's own checks
+    /// (`InAppCallGate`): a call the page treated as less than the tool's
+    /// registered kind → kind_mismatch; a tool that needs the app's security
+    /// check with no pass from one this SDK ran → security_check_required.
+    /// Only the tool name and the call id may be logged — arguments and
+    /// results may carry the customer's data.
+    func run(callId: String, name: String, kind: ClarityToolKind, arguments: [String: Any], timeoutMs: Int) {
+        guard let tool = registry.tool(named: name) else {
             send(InAppToolRegistry.resultMessage(callId: callId, status: InAppToolRegistry.statusUnavailable))
             return
         }
+        if InAppToolRegistry.remembers(tool), let stored = registry.rememberedResult(for: name) {
+            send(InAppToolRegistry.doneMessage(callId: callId, result: stored))
+            return
+        }
+        guard InAppCallGate.kindAllows(called: kind, registered: tool.kind) else {
+            if InAppToolRegistry.remembers(tool) {
+                // The page still offers it as a read, but its answer is gone
+                // (it expired before the timer below told the page): the
+                // page hears it as an action again, so the next call comes
+                // through a card instead of failing the same way.
+                toolsDidChange()
+            }
+            refuse(callId: callId, name: name, reason: InAppCallGate.errorKindMismatch)
+            return
+        }
+        if tool.requiresSecurityCheck, !gate.consumePass(callId: callId, name: name) {
+            refuse(callId: callId, name: name, reason: InAppCallGate.errorSecurityCheckRequired)
+            return
+        }
+        let handler = tool.handler
         let completion = OnceCompletion(callId: callId, send: send)
+        if InAppToolRegistry.remembers(tool) {
+            // An answer that arrives after a logout or a user switch belongs
+            // to the session that was forgotten: not kept.
+            let generation = registry.generation
+            let lifetime = tool.rememberFor
+            completion.onSuccess = { [weak self] value in
+                guard let self else { return }
+                if self.registry.remember(name, result: value, generation: generation) {
+                    // On main: the page hears the tool as a read from now on…
+                    self.after(0) { self.toolsDidChange() }
+                    // …and as an action again once the answer expires, or its
+                    // next call would arrive as a read and be refused.
+                    if let lifetime {
+                        self.after(Self.milliseconds(lifetime)) { self.toolsDidChange() }
+                    }
+                }
+            }
+        }
         after(timeoutMs) { completion.expire() }
-        guard let reveal = registry.reveal(for: name), let reveals else {
+        willRun?(tool)
+        guard let reveal = tool.reveal, let reveals else {
             invoke(handler, arguments: arguments, completion: completion)
             return
         }
@@ -72,6 +134,21 @@ final class InAppToolRunner {
         }
     }
 
+    private static func milliseconds(_ seconds: TimeInterval) -> Int {
+        Int(min((seconds * 1000).rounded(.up), Double(Int32.max)))
+    }
+
+    private func refuse(callId: String, name: String, reason: String) {
+        log("in-app tool \(name) (\(callId)) refused: \(reason)")
+        send(InAppToolRegistry.errorMessage(callId: callId, message: reason))
+    }
+
+    /// The remembered answers are gone (`resetSession`, a user switch): a
+    /// loaded page hears the tools ask again.
+    func forgetRemembered() {
+        if registry.forgetRemembered() { toolsDidChange() }
+    }
+
     /// How long the app's security check may take before it counts as not passed.
     static let securityCheckCapSeconds = 60
 
@@ -79,9 +156,20 @@ final class InAppToolRunner {
     /// when one of its tools needs it, and always answer the page. No tool
     /// that needs it → passed without asking; a tool that needs it but no
     /// check registered → not passed (fail closed). The app's answer counts
-    /// once, from any thread; no answer within the cap is not passed.
-    func securityCheck(requestId: String, tools names: [String]) {
-        let answer = OnceSecurityAnswer { [send] passed in
+    /// once, from any thread; no answer within the cap is not passed. Only
+    /// the answer the page hears as passed records the passes the card's
+    /// steps run on (`InAppCallGate`), bound to `callIds` when the page sent
+    /// them.
+    func securityCheck(requestId: String, tools names: [String], callIds: [String]?) {
+        let answer = OnceSecurityAnswer { [send, gate, registry, log] passed in
+            if passed {
+                let recorded = gate.recordPass(tools: names, callIds: callIds) {
+                    registry.tool(named: $0)?.requiresSecurityCheck == true
+                }
+                if !recorded {
+                    log("The security check passed, but the card's call ids do not match its steps: no step may run")
+                }
+            }
             send(InAppToolRegistry.securityCheckResultMessage(requestId: requestId, passed: passed))
         }
         guard registry.needsSecurityCheck(names) else {

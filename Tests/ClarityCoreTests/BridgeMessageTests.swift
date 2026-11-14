@@ -53,6 +53,19 @@ final class BridgeMessageTests: XCTestCase {
         assertParse(#"{"action":"contentHeightDidChange"}"#, nil)
     }
 
+    /// A message that does not parse may still carry a tool call's
+    /// arguments or the customer's words: the log gets its size only.
+    func testAnUnparseableMessageIsLoggedWithoutItsText() {
+        let raw = #"{"action":"inAppToolCall","callId":"","name":"pay","arguments":{"iban":"DE89370400440532013000"}}"#
+        XCTAssertNil(BridgeMessage.parse(raw))
+
+        let line = BridgeMessage.unparseableLogLine(raw)
+
+        XCTAssertFalse(line.contains("DE89"))
+        XCTAssertFalse(line.contains("pay"))
+        XCTAssertEqual(line, "Failed to parse message (\(raw.utf8.count) bytes)")
+    }
+
     func testClose() {
         assertParse(#"{"action":"close"}"#, .close)
     }

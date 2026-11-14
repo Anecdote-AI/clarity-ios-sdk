@@ -42,8 +42,9 @@ extension URL {
     }
 
     /// An omitted port means the scheme's default one — otherwise the same
-    /// origin written two legal ways would compare unequal.
-    private static func effectivePort(scheme: String, port: Int?) -> Int? {
+    /// origin written two legal ways would compare unequal. Internal: the
+    /// bridge's frame filter compares a `WKSecurityOrigin` the same way.
+    static func effectivePort(scheme: String, port: Int?) -> Int? {
         if let port { return port }
         switch scheme {
         case "https": return 443

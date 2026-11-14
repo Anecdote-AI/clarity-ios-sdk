@@ -18,16 +18,46 @@ extension WidgetEngine: WKScriptMessageHandler {
               let raw = message.body as? String
         else { return }
         let source = message.webView
+        // `webkit.messageHandlers.clarityBridge` is reachable from EVERY
+        // frame, the chat's html-widget iframes included: only the main frame
+        // at the widget's own origin is the live chat page
+        // (`BridgeFrameFilter`). Read now — the frame info describes the
+        // sender at the moment it posted.
+        let frame = message.frameInfo
+        let isMainFrame = frame.isMainFrame
+        let origin = frame.securityOrigin
+        let originProtocol = origin.protocol
+        let originHost = origin.host
+        let originPort = origin.port
         MainThread.run { [self] in
             // Only the engine's CURRENT WebView may drive the state machine:
             // a superseded or torn-down instance can still deliver queued
             // messages (most dangerously a late pageLoaded after a timeout,
             // which would flip a .failed engine back to .loaded).
             guard let source, source === webView else { return }
+            guard BridgeFrameFilter.accepts(
+                isMainFrame: isMainFrame,
+                originProtocol: originProtocol,
+                originHost: originHost,
+                originPort: originPort,
+                baseUrl: config?.baseUrl
+            ) else {
+                // The sender's origin is not a secret; the message is never
+                // logged. A debug event, so the e2e suite can assert the drop.
+                let sender = originProtocol.isEmpty
+                    ? "an opaque origin"
+                    : "\(originProtocol)://\(originHost)"
+                debug(
+                    "bridge: dropped a message from "
+                        + (isMainFrame ? "a main frame" : "a subframe")
+                        + " at \(sender)"
+                )
+                return
+            }
             if let parsed = BridgeMessage.parse(raw) {
                 handle(parsed)
             } else {
-                ClarityLog.log("Failed to parse message: \(raw)")
+                ClarityLog.log(BridgeMessage.unparseableLogLine(raw))
             }
         }
     }

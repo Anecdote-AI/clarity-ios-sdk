@@ -44,6 +44,13 @@ public struct ClarityConfig: Equatable, Sendable {
     /// The corner a collapsed voice call waits in (see
     /// `ClarityVoiceBubblePosition`); default `.bottomEnd`.
     public var voiceBubblePosition: ClarityVoiceBubblePosition
+    /// Ready-made in-app tools the SDK implements itself (reading the screen,
+    /// showing where something is, forms, the help website, diagnostics…).
+    /// nil (default): every group is on; some groups set to `false`: only
+    /// those are off; `ClarityToolTemplates.disabled` (or an empty
+    /// `ClarityToolTemplates()`): none. Offered only while the channel has
+    /// "Use for chat" / "Use for voice" on. See `ClarityToolTemplates`.
+    public var inAppToolTemplates: ClarityToolTemplates?
 
     public static let defaultSheetHeightFraction: Double = 0.85
     public static let defaultLoadTimeout: TimeInterval = 15
@@ -62,7 +69,8 @@ public struct ClarityConfig: Equatable, Sendable {
         showNativeCloseButton: Bool = false,
         loadTimeout: TimeInterval = defaultLoadTimeout,
         showDiagnosticsOnFailure: Bool? = nil,
-        voiceBubblePosition: ClarityVoiceBubblePosition = .bottomEnd
+        voiceBubblePosition: ClarityVoiceBubblePosition = .bottomEnd,
+        inAppToolTemplates: ClarityToolTemplates? = nil
     ) {
         self.organizationId = organizationId
         self.integrationKey = integrationKey
@@ -78,5 +86,25 @@ public struct ClarityConfig: Equatable, Sendable {
         self.loadTimeout = loadTimeout
         self.showDiagnosticsOnFailure = showDiagnosticsOnFailure
         self.voiceBubblePosition = voiceBubblePosition
+        self.inAppToolTemplates = inAppToolTemplates
+    }
+
+    /// Whether the two differ only in their templates, which need no new page.
+    /// Whether `other` points at a different org, channel, stand or app: a
+    /// different conversation, so nothing kept for this one (the ticket
+    /// status, remembered in-app answers) may carry over.
+    func isAnotherConversation(than other: ClarityConfig) -> Bool {
+        organizationId != other.organizationId
+            || integrationKey != other.integrationKey
+            || baseUrl != other.baseUrl
+            || appId != other.appId
+    }
+
+    func equalsIgnoringTemplates(_ other: ClarityConfig) -> Bool {
+        var left = self
+        var right = other
+        left.inAppToolTemplates = nil
+        right.inAppToolTemplates = nil
+        return left == right
     }
 }

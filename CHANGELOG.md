@@ -1,5 +1,75 @@
 # Changelog
 
+## 1.6.0
+
+- **Ready-made in-app tools** (`ClarityConfig.inAppToolTemplates`). The SDK
+  implements a set of tools itself, with the web's names, results and
+  defaults: `read_page`, `show_on_page` and `get_page_text` (the current
+  screen), `find_on_site` and `read_link` (your public help website),
+  `open_link` (your declared screens, through `Clarity.setNavigator`),
+  `get_form`, `focus_form_field` and `fill_form_fields` (the form on screen;
+  one field flat as `field` and `value`, or several in `fields`),
+  `get_diagnostics`, `reload_page` (through `Clarity.setScreenReloader`) and
+  `get_location`.
+  - Every group is on by default (`inAppToolTemplates` left nil);
+    `ClarityToolTemplates(location: false)` turns off only that group; an
+    empty `ClarityToolTemplates()` or `ClarityToolTemplates.disabled` turns
+    them all off. They are offered only while the channel has **Use for
+    chat** / **Use for voice** on.
+  - Your own tools come first; one with a template's name replaces it.
+  - The tools never read what is typed in a field, never fill a password,
+    code or card field, and skip views marked `clarityPrivate`. SwiftUI text
+    and buttons are read only while an assistive technology is on; name the
+    ones that matter with `.clarityLabel(_:)`.
+  - `get_location` lives in the new opt-in `ClarityLocation` module
+    (`ClaritySDK/Location` subspec) and needs
+    `NSLocationWhenInUseUsageDescription`. The CocoaPods pod now has a
+    default `Core` subspec.
+  - `get_diagnostics` reads the camera and the microphone only when the app
+    has their usage string (`not_declared` otherwise), and the core never
+    references `AVCaptureDevice` directly, so an app without those strings is
+    not flagged by App Store review (ITMS-90683).
+- **`click_element`, the seventh ready-made group (`click`, on by default).**
+  Presses a button, link, switch or tab on the current screen for the
+  customer, after they allow it on the card: found by name as `show_on_page`
+  finds it, scrolled into view, checked visible and enabled, then pressed
+  (`sendActions(for: .touchUpInside)`; a SwiftUI control through the new
+  `clarityLabel(_:role:url:action:)` action, or `accessibilityActivate()`
+  while VoiceOver is on). It refuses a text field, a disabled or hidden
+  control, anything private, and a control marked with the new
+  `UIView.clarityNoClick` / `.clarityNoClick()`. A text link opens only on
+  your `siteSearch` website or one of your own URL schemes, and only when the
+  text view's delegate agrees. `ClarityToolTemplates(click: false)` turns it
+  off. New `ClarityElementRole.status`: a SwiftUI status line `read_page`
+  lists with the screen's messages.
+- **`ClarityTool(rememberResult:)`.** An action without arguments can keep its
+  answer for the session once the customer allowed it: it is then offered as
+  a read that answers at once, without a second card. It is forgotten on a
+  logout, another user or another org/channel, and an answer that arrives
+  after that is not kept; the page hears the action again when it expires.
+  A tool with `requiresSecurityCheck` is never remembered: it asks for the
+  card and the check every time.
+- **Security: only the chat page can call your app's tools, and the SDK
+  checks each call itself.** The bridge now accepts messages only from the
+  chat page — the WebView's main frame, at the origin of `baseUrl` — and drops
+  them from any frame inside it, such as content shown in a conversation.
+  A call the chat did not handle as the tool's kind (an action without the
+  customer's Allow) is answered with the error `kind_mismatch` and the handler
+  does not run. A tool registered with `requiresSecurityCheck` runs only on a
+  security check that passed in your app for that card: each pass covers one
+  step, once, within 10 minutes; otherwise the call is answered with
+  `security_check_required`. No change is needed in your code.
+- **The agent gets the app's tools in the order the app registered them.**
+  They were sorted by name, which put the tools an app listed first at the
+  end, and the agent neglects the tools listed last: on a replayed production
+  turn it did the right thing in 1 of 12 runs with the list sorted, against
+  10 of 12 in the declared order. Registering a name again replaces the tool
+  in its place.
+- **At most 32 tools are declared** (the platform's limit). The platform
+  refuses a longer list whole, which left the agent with no tool at all; the
+  tools registered past the 32nd are now left out and named in a
+  `[ClaritySDK]` console warning.
+
 ## 1.5.0
 
 - **A voice call collapses to a bubble.** The call's header has a collapse

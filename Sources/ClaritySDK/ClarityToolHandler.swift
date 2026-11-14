@@ -95,8 +95,8 @@ public struct ClarityToolReveal {
 /// An in-app tool: a capability of your app the support agent can use.
 ///
 /// Your app declares it — what it does, its arguments, read or action — and
-/// supplies the code. Agents with "Tools from the customer's app" switched on
-/// in the cabinet are offered it while this customer chats.
+/// supplies the code. The agent is offered it while this customer chats when
+/// the channel has "Use for chat" on under In-app tools in the cabinet.
 ///
 /// ```swift
 /// Clarity.registerTool(ClarityTool(
@@ -137,7 +137,19 @@ public struct ClarityTool {
     /// one step included), so the app is in view while they run. A card with
     /// one step without it keeps the call open. Only for `kind: .action`.
     public let collapseCallOnAllow: Bool
+    /// Once the customer allowed it and it answered, the SDK keeps the answer
+    /// in memory for this session and offers the tool as a read that returns
+    /// it at once, with no second card. Only for `kind: .action` without
+    /// arguments, and never with `requiresSecurityCheck`: such a tool asks
+    /// for the card and the check every time (else ignored, with a log
+    /// line). Forgotten on
+    /// `resetSession()` and when `identify` switches the user; never written
+    /// to disk.
+    public let rememberResult: Bool
     public let handler: ClarityToolHandler
+    /// How long a remembered answer stands; nil for the whole session. Set by
+    /// the SDK's own templates only (`get_location`: a phone moves).
+    var rememberFor: TimeInterval?
 
     public init(
         name: String,
@@ -149,6 +161,7 @@ public struct ClarityTool {
         reveal: ClarityToolReveal? = nil,
         requiresSecurityCheck: Bool = false,
         collapseCallOnAllow: Bool = false,
+        rememberResult: Bool = false,
         handler: @escaping ClarityToolHandler
     ) {
         self.name = name
@@ -160,6 +173,7 @@ public struct ClarityTool {
         self.reveal = reveal
         self.requiresSecurityCheck = requiresSecurityCheck
         self.collapseCallOnAllow = collapseCallOnAllow
+        self.rememberResult = rememberResult
         self.handler = handler
     }
 }

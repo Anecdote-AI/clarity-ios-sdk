@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
+  <url><loc>https://help.example.com/help/returns</loc><lastmod>2026-10-01</lastmod></url>
+  <url><loc>https://help.example.com/help/return-policy</loc></url>
+  <url><loc>
+    https://help.example.com/help/cancel-subscription
+  </loc></url>
+  <url><loc>https://help.example.com/help/delivery-times?lang=en</loc></url>
+  <url><loc>https://help.example.com/about</loc></url>
+  <url><loc>https://other.example.org/help/returns</loc></url>
+  <url><loc>http://help.example.com/help/insecure</loc></url>
+  <url><loc>https://help.example.com/help/returns#top</loc></url>
+</urlset>

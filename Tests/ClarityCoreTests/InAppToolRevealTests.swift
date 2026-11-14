@@ -92,7 +92,7 @@ final class InAppToolRevealTests: XCTestCase {
             harness.chat?.events.append($0)
         })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         XCTAssertEqual(harness.chat?.events, ["aside strip: Opening your plan…"], "nothing runs before the chat is aside")
 
         harness.chat?.ready?()
@@ -111,12 +111,12 @@ final class InAppToolRevealTests: XCTestCase {
         harness.registry.register(screenTool("open_screen", message: "Opening your plan…", log: log))
         harness.registry.register(screenTool("highlight", message: "Showing the button…", log: log))
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(0)
         // The next step starts within the pause after the first.
-        harness.runner.run(callId: "c2", name: "highlight", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c2", name: "highlight", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.fire(1000)
         XCTAssertFalse(harness.chat?.events.contains("back") ?? true, "a pause that a new step started within is called off")
 
@@ -139,7 +139,7 @@ final class InAppToolRevealTests: XCTestCase {
         var ran = false
         harness.registry.register(screenTool("open_screen", message: "Opening…") { _ in ran = true })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
 
         XCTAssertTrue(ran)
         XCTAssertEqual(harness.chat?.events, [])
@@ -151,7 +151,7 @@ final class InAppToolRevealTests: XCTestCase {
         var ran = false
         harness.registry.register(screenTool("open_screen", message: "Opening…") { _ in ran = true })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
 
         XCTAssertTrue(ran)
     }
@@ -160,7 +160,7 @@ final class InAppToolRevealTests: XCTestCase {
         let harness = Harness()
         harness.registry.register(screenTool("open_screen", message: "Opening…", log: { _ in }, answer: { _ in }))
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(30_000)
@@ -176,7 +176,7 @@ final class InAppToolRevealTests: XCTestCase {
         var ran = false
         harness.registry.register(screenTool("open_screen", message: "Opening…") { _ in ran = true })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.fire(InAppRevealCoordinator.readyWatchdogMs)
         harness.fire(300)
 
@@ -210,7 +210,7 @@ final class InAppToolRevealTests: XCTestCase {
             harness.chat?.events.append($0)
         })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(0)
@@ -227,7 +227,7 @@ final class InAppToolRevealTests: XCTestCase {
             harness.chat?.events.append($0)
         })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(0)
@@ -242,7 +242,7 @@ final class InAppToolRevealTests: XCTestCase {
         let harness = Harness()
         harness.registry.register(screenTool("open_screen", message: "Opening…", holdAfter: nil, waitForApp: true) { _ in })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 20_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 20_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(0)
@@ -273,7 +273,7 @@ final class InAppToolRevealTests: XCTestCase {
 
         let tool = Harness()
         tool.registry.register(screenTool("open_screen", message: "Opening your plan…") { _ in })
-        tool.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        tool.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         XCTAssertEqual(tool.chat?.origins, [.tool])
     }
 
@@ -286,7 +286,7 @@ final class InAppToolRevealTests: XCTestCase {
 
         harness.reveals.appStepAside(style: .strip, message: "Loading…")
         harness.chat?.ready?()
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.fire(300)
         harness.reveals.bringChatBack()
         XCTAssertNotEqual(harness.chat?.events.last, "back", "the tool still runs")
@@ -305,7 +305,7 @@ final class InAppToolRevealTests: XCTestCase {
         harness.chat?.ready?()
         harness.reveals.chatClosed()
         harness.registry.register(screenTool("open_screen", message: "Opening…", holdAfter: 0) { _ in })
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         harness.fire(0)
@@ -328,7 +328,7 @@ final class InAppToolRevealTests: XCTestCase {
         var ran = false
         harness.registry.register(screenTool("open_screen", message: "Opening…") { _ in ran = true })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.reveals.chatClosed()
         harness.fire(300)
 
@@ -347,7 +347,7 @@ final class InAppToolRevealTests: XCTestCase {
             harness.reveals.bringChatBack()
         })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
 
@@ -362,12 +362,12 @@ final class InAppToolRevealTests: XCTestCase {
         harness.registry.register(screenTool("open_screen", message: "Opening…", holdAfter: nil, waitForApp: true,
                                              log: { _ in }) { answers.append($0) })
 
-        harness.runner.run(callId: "c1", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c1", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.chat?.ready?()
         harness.fire(300)
         answers[0](.success(nil))
         harness.fire(0)
-        harness.runner.run(callId: "c2", name: "open_screen", arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(callId: "c2", name: "open_screen", kind: .action, arguments: [:], timeoutMs: 30_000)
         harness.fire(300)
         harness.reveals.bringChatBack()  // screen 1 has loaded
         answers[1](.success(nil))

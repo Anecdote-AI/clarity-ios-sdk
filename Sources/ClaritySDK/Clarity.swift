@@ -21,7 +21,7 @@ import UserNotifications
 public enum Clarity {
 
     #if canImport(UIKit)
-    private static let controller = WidgetEngine()
+    static let controller = WidgetEngine()
     /// Main-thread confined, like all engine state: written inside
     /// `MainThread.run` and read via `engineIfInitialized` from the same
     /// confinement, so a background `initialize` + immediate call sequence
@@ -389,8 +389,8 @@ public enum Clarity {
     // MARK: - In-app tools
 
     /// Declare an in-app tool and the code that runs it (see `ClarityTool`).
-    /// Agents with "Tools from the customer's app" switched on are offered
-    /// it. Works before `initialize`; registering the same name again
+    /// Offered to the agent when the channel has "Use for chat" switched
+    /// on. Works before `initialize`; registering the same name again
     /// replaces the tool. Returns false (and logs why) for a tool that could
     /// never be declared.
     @discardableResult
@@ -412,7 +412,9 @@ public enum Clarity {
     /// it once for the whole card, before any step runs; the handlers then do
     /// not check again. Not passed (or no answer within 60 s) → nothing runs
     /// and the card asks again. A card that needs it while none is set does
-    /// not run.
+    /// not run. The SDK holds each step to the pass itself: a tool that needs
+    /// the check runs only on a check that passed for its card, once per
+    /// step, within 10 minutes.
     ///
     /// ```swift
     /// Clarity.setSecurityCheck { request, done in

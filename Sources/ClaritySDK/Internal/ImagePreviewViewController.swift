@@ -191,7 +191,14 @@ extension ImagePreviewViewController: WKScriptMessageHandler {
         _ userContentController: WKUserContentController,
         didReceive message: WKScriptMessage
     ) {
-        guard message.name == Self.bridgeName, let body = message.body as? String else { return }
+        // The preview's document is our own one-image page (no frames, no
+        // page script), and the only thing it can report is the spinner's
+        // state — no host capability sits behind this handler. Still, only
+        // the main frame speaks for it.
+        guard message.name == Self.bridgeName,
+              message.frameInfo.isMainFrame,
+              let body = message.body as? String
+        else { return }
         MainThread.run { [weak self] in
             switch body {
             case "loaded": self?.apply(state: .loaded)

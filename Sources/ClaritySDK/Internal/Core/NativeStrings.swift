@@ -16,6 +16,13 @@ enum NativeStrings {
         case close
         case imageLoadFailed
         case imageRetry
+        // The loaders of the ready-made in-app tools (`TemplateCatalog`).
+        case revealShowing
+        case revealOpening
+        case revealField
+        case revealFilling
+        case revealRefreshing
+        case revealPressing
     }
 
     static func text(
@@ -43,6 +50,12 @@ enum NativeStrings {
         .close: "Close",
         .imageLoadFailed: "Couldn't load image",
         .imageRetry: "Try again",
+        .revealShowing: "Showing you where it is…",
+        .revealOpening: "Opening…",
+        .revealField: "Showing the field…",
+        .revealFilling: "Filling in…",
+        .revealRefreshing: "Refreshing…",
+        .revealPressing: "Pressing…",
     ]
 
     // Wording follows the chat's own Arabic copy where it has the same string
@@ -53,5 +66,11 @@ enum NativeStrings {
         .close: "إغلاق",
         .imageLoadFailed: "تعذّر تحميل الصورة",
         .imageRetry: "حاول مرة أخرى",
+        .revealShowing: "نريك مكانه…",
+        .revealOpening: "جارٍ الفتح…",
+        .revealField: "نعرض لك الحقل…",
+        .revealFilling: "جارٍ التعبئة…",
+        .revealRefreshing: "جارٍ التحديث…",
+        .revealPressing: "جارٍ الضغط…",
     ]
 }

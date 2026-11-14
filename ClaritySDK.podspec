@@ -46,9 +46,31 @@ Pod::Spec.new do |s|
     :tag => "v#{s.version}",
   }
 
-  # Mirrors Package.swift: iOS 15+, Swift 5.10, one source-only library target.
+  # Mirrors Package.swift: iOS 15+, Swift 5.10, source-only: the core and the
+  # optional location provider.
   s.ios.deployment_target = '15.0'
   s.swift_versions        = ['5.10']
-  s.source_files          = 'Sources/ClaritySDK/**/*.swift'
-  s.frameworks            = 'UIKit', 'WebKit', 'UserNotifications'
+  s.default_subspecs      = 'Core'
+  # One pod target holds every subspec, so ClarityCoreLocation.swift is part
+  # of ClaritySDK itself here and must not import it (a self-import is a
+  # compiler warning, and `pod lib lint` runs without --allow-warnings).
+  s.pod_target_xcconfig   = { 'SWIFT_ACTIVE_COMPILATION_CONDITIONS' => '$(inherited) CLARITY_COCOAPODS' }
+
+  s.subspec 'Core' do |core|
+    core.source_files = 'Sources/ClaritySDK/**/*.swift'
+    # AVFAudio, not AVFoundation: the camera and microphone status is read
+    # through the run time only (CaptureDeviceProbe), so App Store review sees
+    # no AVCaptureDevice reference in an app without the usage strings.
+    core.frameworks   = 'UIKit', 'WebKit', 'UserNotifications', 'AVFAudio', 'Network'
+  end
+
+  # The `get_location` in-app tool's CoreLocation provider (`ClarityCoreLocation`),
+  # opt-in so an app that does not use location never links CoreLocation —
+  # App Store review flags a binary that references the location APIs
+  # without a usage string. Mirrors the SPM product `ClarityLocation`.
+  s.subspec 'Location' do |location|
+    location.dependency 'ClaritySDK/Core'
+    location.source_files = 'Sources/ClarityLocation/**/*.swift'
+    location.frameworks   = 'CoreLocation'
+  end
 end
