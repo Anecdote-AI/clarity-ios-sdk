@@ -55,6 +55,16 @@ final class OutboundMessageTests: XCTestCase {
         XCTAssertEqual(object.count, 1, "action-only payload — no extra fields")
     }
 
+    /// A tapped push opens its conversation; the page reads `ticketId` as a
+    /// JSON number and ignores the tap otherwise.
+    func testOpenTicketCarriesTheIdAsANumber() throws {
+        let object = try parse(OutboundMessage.openTicket(ticketId: 123))
+        XCTAssertEqual(object["action"] as? String, "openTicket")
+        XCTAssertEqual(object["ticketId"] as? Int, 123)
+        XCTAssertNil(object["ticketId"] as? String, "a number, never a string")
+        XCTAssertEqual(object.count, 2)
+    }
+
     func testWidgetVisibilityChanged() throws {
         let visible = try parse(OutboundMessage.widgetVisibilityChanged(visible: true))
         XCTAssertEqual(visible["action"] as? String, "widgetVisibilityChanged")

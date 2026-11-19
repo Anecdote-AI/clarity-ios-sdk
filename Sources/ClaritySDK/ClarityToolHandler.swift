@@ -146,10 +146,28 @@ public struct ClarityTool {
     /// `resetSession()` and when `identify` switches the user; never written
     /// to disk.
     public let rememberResult: Bool
+    /// What the customer's card says the tool does, in a few words ("Sign a
+    /// device out"); ≤ 60 characters. Also names the tool in the chat's App
+    /// permissions. nil: the card shows the tool's name.
+    public let label: String?
+    /// How the customer may approve a `kind: .action` beyond "Allow once"
+    /// (`ClarityToolApproval`). nil: as far as the channel's "Customer
+    /// approval" mode and `ClarityConfig.inAppToolApproval` allow.
+    public let approval: ClarityToolApproval?
     public let handler: ClarityToolHandler
     /// How long a remembered answer stands; nil for the whole session. Set by
     /// the SDK's own templates only (`get_location`: a phone moves).
     var rememberFor: TimeInterval?
+    /// Run instead of `handler`, with how this very call was approved when it
+    /// came without a card (`session`, `allow_all`), else nil. Set by the
+    /// SDK's own templates only (the click refuses a press that must ask).
+    /// Per call, never a shared field: a call that arrives while another
+    /// waits for its reveal must not change what the other runs with.
+    var approvedHandler: (@MainActor (
+        _ arguments: [String: Any],
+        _ approval: String?,
+        _ completion: @escaping ClarityToolCompletion
+    ) -> Void)?
 
     public init(
         name: String,
@@ -162,6 +180,8 @@ public struct ClarityTool {
         requiresSecurityCheck: Bool = false,
         collapseCallOnAllow: Bool = false,
         rememberResult: Bool = false,
+        label: String? = nil,
+        approval: ClarityToolApproval? = nil,
         handler: @escaping ClarityToolHandler
     ) {
         self.name = name
@@ -174,7 +194,55 @@ public struct ClarityTool {
         self.requiresSecurityCheck = requiresSecurityCheck
         self.collapseCallOnAllow = collapseCallOnAllow
         self.rememberResult = rememberResult
+        self.label = label
+        self.approval = approval
         self.handler = handler
+    }
+}
+
+/// A kind of action that always asks the customer on a card, whatever they
+/// allowed for the chat or with "Allow all". The platform also asks for any
+/// action that reads like a payment or a subscription; declare the others.
+public enum ClaritySensitiveCategory: String, Sendable, CaseIterable {
+    case payment
+    case subscription
+    case accountDeletion = "account_deletion"
+    case credentials
+    case dataSharing = "data_sharing"
+    case legal
+    case other
+}
+
+/// How the customer may approve one `kind: .action` (the web's `approval`).
+/// It can only make the tool ask more often than the channel's "Customer
+/// approval" mode lets it: never less.
+public struct ClarityToolApproval: Equatable, Sendable {
+    /// The card may offer "Allow for this chat" for this tool.
+    public var allowForSession: Bool
+    /// The customer's "Allow all" covers this tool.
+    public var allowAll: Bool
+    /// Set: the tool asks every time, whatever the customer allowed.
+    public var sensitive: ClaritySensitiveCategory?
+
+    public init(allowForSession: Bool = true, allowAll: Bool = true, sensitive: ClaritySensitiveCategory? = nil) {
+        self.allowForSession = allowForSession
+        self.allowAll = allowAll
+        self.sensitive = sensitive
+    }
+}
+
+/// What the app lets its customers choose for in-app actions (the web's
+/// `inAppToolApproval`): it narrows the channel's "Customer approval" mode,
+/// never widens it. Both on by default.
+public struct ClarityInAppToolApproval: Equatable, Sendable {
+    /// Cards may offer "Allow for this chat".
+    public var allowForSession: Bool
+    /// App permissions may offer "Allow all actions".
+    public var allowAll: Bool
+
+    public init(allowForSession: Bool = true, allowAll: Bool = true) {
+        self.allowForSession = allowForSession
+        self.allowAll = allowAll
     }
 }
 

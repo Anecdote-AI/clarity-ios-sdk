@@ -36,13 +36,13 @@ final class InAppToolsTests: XCTestCase {
         let kinds = ["read": ClarityToolKind.read, "safe_action": .safeAction, "action": .action, "ACTION": .read, "approve": .read]
         for (raw, expected) in kinds {
             let message = BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"get_plan","kind":"\#(raw)"}"#)
-            guard case .inAppToolCall(_, _, let kind, _, _, _)? = message else {
+            guard case .inAppToolCall(_, _, let kind, _, _, _, _)? = message else {
                 return XCTFail("not parsed: \(String(describing: message))")
             }
             XCTAssertEqual(kind, expected, raw)
         }
         let numeric = BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"get_plan","kind":2}"#)
-        guard case .inAppToolCall(_, _, .read, _, _, _)? = numeric else {
+        guard case .inAppToolCall(_, _, .read, _, _, _, _)? = numeric else {
             return XCTFail("a kind that is not a string must read as a read: \(String(describing: numeric))")
         }
     }
@@ -80,7 +80,7 @@ final class InAppToolsTests: XCTestCase {
 
         XCTAssertEqual(
             registry.registeredMessage(),
-            #"{"action":"inAppToolsRegistered","collapseCallOnAllow":[],"securityCheck":[],"tools":[{"description":"Gets the plan","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"get_plan","resultSchema":{"type":"object"},"timeoutSeconds":10},{"description":"Lists devices","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"list_devices"}]}"#
+            #"{"action":"inAppToolsRegistered","approvalModes":{"allowAll":true,"allowForSession":true},"collapseCallOnAllow":[],"securityCheck":[],"tools":[{"description":"Gets the plan","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"get_plan","resultSchema":{"type":"object"},"timeoutSeconds":10},{"description":"Lists devices","inputSchema":{"properties":{},"type":"object"},"kind":"read","name":"list_devices"}]}"#
         )
         XCTAssertTrue(registry.unregister("get_plan"))
         XCTAssertFalse(registry.unregister("get_plan"))

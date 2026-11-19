@@ -329,22 +329,33 @@ public enum Clarity {
             || (userInfo[pushMarkerKey] as? Bool) == true
     }
 
-    /// Handle a Clarity remote push by rendering it as the SDK's local
-    /// notification. Returns false (untouched) for foreign payloads. Never
-    /// throws into the host's push path.
+    /// Handle a Clarity remote push. Returns false (untouched) for foreign
+    /// payloads. A push the system shows by itself (an `aps.alert` push, which
+    /// is what the platform sends) is left to the system — the SDK posts
+    /// nothing, so it is never shown twice; any other Clarity payload is
+    /// rendered as the SDK's local notification. Either way a tap opens the
+    /// chat at the push's conversation (`ticket_id`) through
+    /// `handleNotificationResponse`. Never throws into the host's push path.
     @discardableResult
     public static func handlePush(userInfo: [AnyHashable: Any]) -> Bool {
         guard isClarityPush(userInfo: userInfo) else { return false }
         #if canImport(UIKit)
+        guard !PushAlert.isShownBySystem(userInfo) else { return true }
         let body = (userInfo["body"] as? String) ?? ""
-        NotificationHelper.showNewMessage(body, language: config?.language)
+        NotificationHelper.showNewMessage(
+            body,
+            language: config?.language,
+            ticketId: PushTicket.parse(userInfo[PushTicket.userInfoKey])
+        )
         #endif
         return true
     }
 
     #if canImport(UIKit)
     /// Route a notification tap: when the response is Clarity's (the SDK's
-    /// local "new message" notification), opens the widget and returns true.
+    /// local "new message" notification, or a Clarity push the system
+    /// displayed), opens the widget — at the push's conversation when it
+    /// names one — and returns true.
     /// Forward from `userNotificationCenter(_:didReceive:withCompletionHandler:)`.
     @discardableResult
     public static func handleNotificationResponse(_ response: UNNotificationResponse) -> Bool {
@@ -359,6 +370,11 @@ public enum Clarity {
             return false
         }
         NotificationHelper.cancel()
+        // Both kinds carry the conversation under the same key: the platform
+        // puts it in the push, and NotificationHelper copies it.
+        if let ticketId = PushTicket.parse(userInfo[PushTicket.userInfoKey]) {
+            onEngine { $0.openTicket(ticketId) }
+        }
         show()
         return true
     }

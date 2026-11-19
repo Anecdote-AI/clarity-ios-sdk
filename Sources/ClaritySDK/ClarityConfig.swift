@@ -51,6 +51,11 @@ public struct ClarityConfig: Equatable, Sendable {
     /// `ClarityToolTemplates()`): none. Offered only while the channel has
     /// "Use for chat" / "Use for voice" on. See `ClarityToolTemplates`.
     public var inAppToolTemplates: ClarityToolTemplates?
+    /// What your customers may choose for in-app actions
+    /// (`ClarityInAppToolApproval`): it narrows the channel's "Customer
+    /// approval" mode, never widens it. nil (default): as far as the channel
+    /// allows.
+    public var inAppToolApproval: ClarityInAppToolApproval?
 
     public static let defaultSheetHeightFraction: Double = 0.85
     public static let defaultLoadTimeout: TimeInterval = 15
@@ -70,7 +75,8 @@ public struct ClarityConfig: Equatable, Sendable {
         loadTimeout: TimeInterval = defaultLoadTimeout,
         showDiagnosticsOnFailure: Bool? = nil,
         voiceBubblePosition: ClarityVoiceBubblePosition = .bottomEnd,
-        inAppToolTemplates: ClarityToolTemplates? = nil
+        inAppToolTemplates: ClarityToolTemplates? = nil,
+        inAppToolApproval: ClarityInAppToolApproval? = nil
     ) {
         self.organizationId = organizationId
         self.integrationKey = integrationKey
@@ -87,6 +93,7 @@ public struct ClarityConfig: Equatable, Sendable {
         self.showDiagnosticsOnFailure = showDiagnosticsOnFailure
         self.voiceBubblePosition = voiceBubblePosition
         self.inAppToolTemplates = inAppToolTemplates
+        self.inAppToolApproval = inAppToolApproval
     }
 
     /// Whether the two differ only in their templates, which need no new page.
@@ -100,11 +107,15 @@ public struct ClarityConfig: Equatable, Sendable {
             || appId != other.appId
     }
 
+    /// Whether the two differ only in their in-app tool options (the
+    /// ready-made tools, the approval narrowing), which need no new page.
     func equalsIgnoringTemplates(_ other: ClarityConfig) -> Bool {
         var left = self
         var right = other
         left.inAppToolTemplates = nil
         right.inAppToolTemplates = nil
+        left.inAppToolApproval = nil
+        right.inAppToolApproval = nil
         return left == right
     }
 }

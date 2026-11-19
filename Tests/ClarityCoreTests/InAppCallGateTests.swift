@@ -98,7 +98,7 @@ final class InAppCallGateTests: XCTestCase {
         let message = BridgeMessage.parse(
             #"{"action":"inAppToolCall","callId":"c1","name":"remove_device","arguments":{"device_id":"tv-1"}}"#
         )
-        guard case .inAppToolCall(let callId, let name, let kind, _, let timeoutMs, _)? = message else {
+        guard case .inAppToolCall(let callId, let name, let kind, _, let timeoutMs, _, _)? = message else {
             return XCTFail("not parsed")
         }
 

@@ -1,5 +1,46 @@
 # Changelog
 
+## 1.7.0
+
+Push notifications that open their conversation, sign-out that stops the
+previous customer's pushes, no doubled alert from `handlePush`, and approval
+modes for in-app actions.
+
+- **Signing out stops the previous customer's pushes.** `resetSession()` and
+  an `identify` that switches to a different user now unbind the device token
+  from the session that ended (`POST /api/live-chat/device/unregister`, read
+  from the session cookie just before the wipe), so a signed-out phone no
+  longer receives that customer's messages until the page loads again. The
+  token is kept and registered for the next session as before. Fire-and-forget;
+  needs a platform with the unregister endpoint (an older one answers 404,
+  which changes nothing).
+- **A push notification opens its conversation.** The Support Portal now
+  sends APNs alert pushes (set up under Settings › Channels › Mobile › Push
+  notifications with your APNs key). `handleNotificationResponse` reads the
+  push's `ticket_id` — from a push the system displayed, or from the SDK's own
+  notification, which `handlePush` now carries it in — and opens the chat at
+  that conversation, also on a cold start, where it waits for the page to load.
+  `handlePush` posts nothing for an alert push (the system shows it), so a
+  push is never shown twice. A push without a ticket, or one the session
+  cannot read, opens the chat as before. Needs a chat page with the
+  `openTicket` bridge action; an older page ignores it. No public API change.
+- **Approval modes of in-app actions**: `ClarityTool` takes
+  `label` (the card's words for the action, at most 60 characters) and
+  `approval` (`ClarityToolApproval`: `allowForSession`, `allowAll`, `sensitive`
+  — `ClaritySensitiveCategory`), and `ClarityConfig.inAppToolApproval`
+  (`ClarityInAppToolApproval`) narrows the channel's **Customer approval** mode for the
+  whole app. They reach the chat with the declarations (`label`, `approval`,
+  and `approvalModes` on `inAppToolsRegistered`). A call that came without a
+  card (`approval: "session" | "allow_all"`) runs only when the tool's
+  registration and the app's modes allow it; a tool that always asks (declared
+  `sensitive`, `requiresSecurityCheck`, or money in its name or label, from the
+  platform's lexicon) is answered `approval_required:<category>`, and the
+  platform puts the card up instead, saying why. The ready-made `click_element`
+  refuses the same way to press, without a card, a control that reads like a
+  payment, a checkout link, "Confirm" next to an amount, or deleting the
+  account. Needs a chat and platform with approval modes; an older one never
+  sends `approval`, so nothing runs without a card that did not before.
+
 ## 1.6.0
 
 - **Ready-made in-app tools** (`ClarityConfig.inAppToolTemplates`). The SDK

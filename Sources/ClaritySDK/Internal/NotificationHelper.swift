@@ -28,7 +28,9 @@ enum NotificationHelper {
     /// host's push handler, so the generation bookkeeping hops to main first.
     /// - Parameter language: `ClarityConfig.language`; the title and the
     ///   fallback body follow it like the chat does (`NativeStrings`).
-    static func showNewMessage(_ text: String, language: String?) {
+    /// - Parameter ticketId: the push's conversation (`PushTicket`), kept in
+    ///   userInfo so a tap opens the chat at it.
+    static func showNewMessage(_ text: String, language: String?, ticketId: Int? = nil) {
         MainThread.run {
             let issuedGeneration = generation
             let center = UNUserNotificationCenter.current()
@@ -43,7 +45,11 @@ enum NotificationHelper {
                     ? NativeStrings.text(.notificationFallbackBody, language: language)
                     : text
                 content.sound = .default
-                content.userInfo = [userInfoMarkerKey: true]
+                var userInfo: [AnyHashable: Any] = [userInfoMarkerKey: true]
+                if let ticketId {
+                    userInfo[PushTicket.userInfoKey] = String(ticketId)
+                }
+                content.userInfo = userInfo
                 content.interruptionLevel = .active
 
                 let request = UNNotificationRequest(

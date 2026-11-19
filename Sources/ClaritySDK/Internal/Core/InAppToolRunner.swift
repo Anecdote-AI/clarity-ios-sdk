@@ -68,9 +68,24 @@ final class InAppToolRunner {
     /// check with no pass from one this SDK ran → security_check_required.
     /// Only the tool name and the call id may be logged — arguments and
     /// results may carry the customer's data.
-    func run(callId: String, name: String, kind: ClarityToolKind, arguments: [String: Any], timeoutMs: Int) {
+    func run(
+        callId: String,
+        name: String,
+        kind: ClarityToolKind,
+        arguments: [String: Any],
+        timeoutMs: Int,
+        approval: String? = nil
+    ) {
         guard let tool = registry.tool(named: name) else {
             send(InAppToolRegistry.resultMessage(callId: callId, status: InAppToolRegistry.statusUnavailable))
+            return
+        }
+        // A call that came without a card first, before even a remembered
+        // answer: it runs only when what the app registered lets that cover it.
+        if let approval, let refused = InAppApproval.refusal(
+            tool, approval: approval, modes: registry.approvalModes, arguments: arguments
+        ) {
+            refuse(callId: callId, name: name, reason: refused)
             return
         }
         if InAppToolRegistry.remembers(tool), let stored = registry.rememberedResult(for: name) {
@@ -92,7 +107,6 @@ final class InAppToolRunner {
             refuse(callId: callId, name: name, reason: InAppCallGate.errorSecurityCheckRequired)
             return
         }
-        let handler = tool.handler
         let completion = OnceCompletion(callId: callId, send: send)
         if InAppToolRegistry.remembers(tool) {
             // An answer that arrives after a logout or a user switch belongs
@@ -115,7 +129,7 @@ final class InAppToolRunner {
         after(timeoutMs) { completion.expire() }
         willRun?(tool)
         guard let reveal = tool.reveal, let reveals else {
-            invoke(handler, arguments: arguments, completion: completion)
+            invoke(tool, arguments: arguments, approval: approval, completion: completion)
             return
         }
         // The chat steps aside first; it learns of the answer (or the
@@ -130,7 +144,9 @@ final class InAppToolRunner {
             completion.onAnswered = {
                 if isMainThread() { finished() } else { after(0) { finished() } }
             }
-            self?.invoke(handler, arguments: arguments, completion: completion)
+            // This call's own approval, captured here: another call that
+            // arrives during the reveal runs with its own.
+            self?.invoke(tool, arguments: arguments, approval: approval, completion: completion)
         }
     }
 
@@ -193,15 +209,20 @@ final class InAppToolRunner {
     }
 
     private func invoke(
-        _ handler: @escaping ClarityToolHandler,
+        _ tool: ClarityTool,
         arguments: [String: Any],
+        approval: String?,
         completion: OnceCompletion
     ) {
         // The engine calls this on the main thread. The check only matters to
         // the macOS host build of `swift test`; the SDK itself needs iOS 15.
         if #available(iOS 13.0, macOS 10.15, *) {
             MainActor.assumeIsolated {
-                handler(arguments) { result in completion.complete(result) }
+                if let approvedHandler = tool.approvedHandler {
+                    approvedHandler(arguments, approval) { result in completion.complete(result) }
+                } else {
+                    tool.handler(arguments) { result in completion.complete(result) }
+                }
             }
         } else {
             completion.complete(.failure("in-app tools need iOS 13 or later"))

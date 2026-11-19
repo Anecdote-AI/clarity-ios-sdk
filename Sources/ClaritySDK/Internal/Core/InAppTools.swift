@@ -47,6 +47,7 @@ final class InAppToolRegistry {
     /// repeated on every announcement.
     private var warnedLeftOut: [String] = []
     private var check: ClaritySecurityCheck?
+    private var modes = ClarityInAppToolApproval()
     private let log: (String) -> Void
     /// Seconds on a monotonic clock, so a remembered answer's expiry matches
     /// the runner's timer for it and ignores changes to the device clock.
@@ -64,6 +65,23 @@ final class InAppToolRegistry {
     var securityCheck: ClaritySecurityCheck? {
         get { lock.lock(); defer { lock.unlock() }; return check }
         set { lock.lock(); check = newValue; lock.unlock() }
+    }
+
+    /// What the app lets its customers choose (`ClarityConfig.inAppToolApproval`).
+    var approvalModes: ClarityInAppToolApproval {
+        get { lock.lock(); defer { lock.unlock() }; return modes }
+        set { lock.lock(); modes = newValue; lock.unlock() }
+    }
+
+    /// Takes the app's choice from a new config (nil: the defaults). True
+    /// when it changed, so a loaded page must hear the declarations again.
+    func updateApprovalModes(_ new: ClarityInAppToolApproval?) -> Bool {
+        let new = new ?? ClarityInAppToolApproval()
+        lock.lock()
+        defer { lock.unlock() }
+        guard modes != new else { return false }
+        modes = new
+        return true
     }
 
     /// Whether a card with these tools needs the app's security check.
@@ -276,6 +294,7 @@ final class InAppToolRegistry {
             // Allow, the backend never hears of it.
             "securityCheck": carded.filter(\.requiresSecurityCheck).map(\.name),
             "collapseCallOnAllow": carded.filter(\.collapseCallOnAllow).map(\.name),
+            "approvalModes": ["allowForSession": approvalModes.allowForSession, "allowAll": approvalModes.allowAll],
         ])
     }
 
@@ -310,7 +329,21 @@ final class InAppToolRegistry {
         ]
         declaration["resultSchema"] = tool.resultSchema
         declaration["timeoutSeconds"] = tool.timeoutSeconds
+        if let label = tool.label?.trimmingCharacters(in: .whitespacesAndNewlines), !label.isEmpty {
+            declaration["label"] = label
+        }
+        declaration["approval"] = approvalJSON(tool.approval)
         return declaration
+    }
+
+    /// The tool's `approval` as the page reads it: only what differs from the defaults.
+    private static func approvalJSON(_ approval: ClarityToolApproval?) -> [String: Any]? {
+        guard let approval else { return nil }
+        var json: [String: Any] = [:]
+        if !approval.allowForSession { json["allowForSession"] = false }
+        if !approval.allowAll { json["allowAll"] = false }
+        if let sensitive = approval.sensitive { json["sensitive"] = sensitive.rawValue }
+        return json.isEmpty ? nil : json
     }
 
     static func resultMessage(callId: String, status: String) -> String {

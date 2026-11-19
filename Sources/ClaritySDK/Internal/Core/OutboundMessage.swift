@@ -87,6 +87,13 @@ enum OutboundMessage {
         }
     }
 
+    /// The customer tapped a push about this conversation: the page switches
+    /// the chat to it, or keeps its normal start when the session cannot read
+    /// it. `ticketId` is a JSON number (`openTicket` in nativeSdkBridge.ts).
+    static func openTicket(ticketId: Int) -> String {
+        payload(action: "openTicket", fields: ["ticketId": ticketId])
+    }
+
     /// Host-requested on-demand sync: the page refetches the conversation
     /// events, so the latest ticket state (status + any missed replies) flows
     /// through the normal reporting path.

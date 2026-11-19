@@ -15,7 +15,16 @@ enum WebSessionCleaner {
     /// records keyed by the host's registrable domain (WebKit groups records
     /// by eTLD+1 — coarser than an origin; acceptable because a customer's
     /// live-chat domain does not host unrelated app content).
-    static func clear(baseUrl: String, completion: @escaping () -> Void) {
+    ///
+    /// `beforeCookiesDelete` receives the widget host's cookies (name, value)
+    /// as they were just before they are deleted — the store is read
+    /// asynchronously, so this is the one moment the ending session's id can
+    /// still be read. Called on the main thread, at most once.
+    static func clear(
+        baseUrl: String,
+        beforeCookiesDelete: (([(name: String, value: String)]) -> Void)? = nil,
+        completion: @escaping () -> Void
+    ) {
         guard let host = URL(string: baseUrl)?.host, !host.isEmpty else {
             completion()
             return
@@ -26,7 +35,9 @@ enum WebSessionCleaner {
         let group = DispatchGroup()
 
         group.enter()
-        deleteCookies(matching: domains, host: host, in: store) { group.leave() }
+        deleteCookies(
+            matching: domains, host: host, in: store, beforeDelete: beforeCookiesDelete
+        ) { group.leave() }
 
         group.enter()
         deleteRecords(matching: domains, host: host, in: store) { group.leave() }
@@ -40,6 +51,7 @@ enum WebSessionCleaner {
         matching domains: Set<String>,
         host: String,
         in store: WKWebsiteDataStore,
+        beforeDelete: (([(name: String, value: String)]) -> Void)?,
         completion: @escaping () -> Void
     ) {
         store.httpCookieStore.getAllCookies { cookies in
@@ -49,6 +61,7 @@ enum WebSessionCleaner {
                     : cookie.domain
                 return domains.contains(cookieDomain) || cookieDomain == host
             }
+            beforeDelete?(doomed.map { (name: $0.name, value: $0.value) })
             guard !doomed.isEmpty else {
                 completion()
                 return

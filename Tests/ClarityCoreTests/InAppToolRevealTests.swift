@@ -389,4 +389,61 @@ final class InAppToolRevealTests: XCTestCase {
 
         XCTAssertEqual(harness.notified, ["aside", "returned"])
     }
+
+    // MARK: - Each call runs with its own approval
+
+    /// A tool like the built-in click: it hears how its own call was approved.
+    private func approvalTool(
+        _ name: String,
+        reveal: Bool,
+        heard: @escaping (String, String?) -> Void
+    ) -> ClarityTool {
+        var tool = ClarityTool(
+            name: name,
+            description: "Presses a control",
+            kind: .action,
+            reveal: reveal ? ClarityToolReveal(message: "Pressing…", delayBefore: 0.3, holdAfter: nil) : nil
+        ) { _, completion in completion(.failure("the approval was not handed over")) }
+        tool.approvedHandler = { _, approval, completion in
+            heard(name, approval)
+            completion(.success(["ok": true]))
+        }
+        return tool
+    }
+
+    /// Regression: the click's money guard read an approval shared by every
+    /// call, set before the reveal, so a call that arrived during the reveal
+    /// replaced it: a press allowed for the chat ran as if carded and skipped
+    /// the guard, and a carded press was refused as if allowed for the chat.
+    func testACallDuringAnotherCallsRevealDoesNotChangeItsApproval() {
+        let harness = Harness()
+        harness.onMain = true
+        var heard: [String] = []
+        let record: (String, String?) -> Void = { heard.append("\($0): \($1 ?? "card")") }
+        harness.registry.register(approvalTool("press_button", reveal: true, heard: record))
+        harness.registry.register(approvalTool("save_note", reveal: false, heard: record))
+
+        harness.runner.run(
+            callId: "c1", name: "press_button", kind: .action, arguments: [:], timeoutMs: 30_000,
+            approval: InAppApproval.sourceSession
+        )
+        // Arrives while the chat steps aside for the first call.
+        harness.runner.run(callId: "c2", name: "save_note", kind: .action, arguments: [:], timeoutMs: 30_000)
+        harness.chat?.ready?()
+        harness.fire(300)
+
+        harness.runner.run(callId: "c3", name: "press_button", kind: .action, arguments: [:], timeoutMs: 30_000)
+        harness.runner.run(
+            callId: "c4", name: "save_note", kind: .action, arguments: [:], timeoutMs: 30_000,
+            approval: InAppApproval.sourceAllowAll
+        )
+        harness.fire(300)
+
+        XCTAssertEqual(heard, [
+            "save_note: card",
+            "press_button: session",
+            "save_note: allow_all",
+            "press_button: card",
+        ])
+    }
 }

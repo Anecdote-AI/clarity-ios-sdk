@@ -39,7 +39,9 @@ enum BridgeMessage: Equatable {
     case pageLoadedError(code: Int, message: String)
     case contentHeightDidChange(height: Double)
     case close
-    case newMessage(text: String)
+    /// `ticketId`: the conversation the reply is in, so the notification's
+    /// tap opens it (nil from a page that predates it).
+    case newMessage(text: String, ticketId: Int?)
     case unreadCountDidChange(count: Int)
     case ticketStatusChanged(status: String)
     case openImage(url: String)
@@ -53,7 +55,9 @@ enum BridgeMessage: Equatable {
     /// ready-made tools draw in; nil from a page that does not send it.
     case inAppToolCall(
         callId: String, name: String, kind: ClarityToolKind, argumentsJSON: String, timeoutMs: Int,
-        accentColor: String? = nil
+        accentColor: String? = nil,
+        // Set when the call came without a card: `session` or `allow_all`.
+        approval: String? = nil
     )
     /// The backend refused some of the host's tool declarations.
     case inAppToolsRejected([InAppToolRejection])
@@ -97,7 +101,10 @@ enum BridgeMessage: Equatable {
         case "close":
             return .close
         case "newMessage":
-            return .newMessage(text: json["text"] as? String ?? "")
+            return .newMessage(
+                text: json["text"] as? String ?? "",
+                ticketId: PushTicket.parse(json["ticketId"])
+            )
         case "unreadCountDidChange":
             return .unreadCountDidChange(count: intValue(json["count"]) ?? 0)
         case "ticketStatusChanged":
@@ -141,7 +148,8 @@ enum BridgeMessage: Equatable {
                 kind: .fromPage(json["kind"]),
                 argumentsJSON: JSONEncoding.objectString(arguments),
                 timeoutMs: intValue(json["timeoutMs"]) ?? defaultInAppTimeoutMs,
-                accentColor: json["accentColor"] as? String
+                accentColor: json["accentColor"] as? String,
+                approval: (json["approval"] as? String).flatMap { $0.isEmpty ? nil : $0 }
             )
         case "voiceCallStatus":
             return .voiceCallStatus(

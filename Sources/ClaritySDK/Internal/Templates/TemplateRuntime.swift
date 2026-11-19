@@ -115,9 +115,17 @@ final class TemplateRuntime {
             timeoutSeconds: spec.timeoutSeconds,
             reveal: reveal,
             rememberResult: spec.rememberFor != nil,
-            handler: handler(for: spec.name)
+            handler: { [weak self] arguments, completion in
+                guard let self else { return completion(.failure("unavailable")) }
+                self.run(spec.name, arguments, approval: nil, completion)
+            }
         )
         tool.rememberFor = spec.rememberFor
+        // Each call hears its own approval (`InAppToolRunner`).
+        tool.approvedHandler = { [weak self] arguments, approval, completion in
+            guard let self else { return completion(.failure("unavailable")) }
+            self.run(spec.name, arguments, approval: approval, completion)
+        }
         return tool
     }
 
@@ -156,28 +164,29 @@ final class TemplateRuntime {
 
     // MARK: - Handlers
 
-    private func handler(for name: String) -> ClarityToolHandler {
-        { [weak self] arguments, completion in
-            guard let self else {
-                completion(.failure("unavailable"))
-                return
-            }
-            switch name {
-            case TemplateCatalog.Name.readPage: self.readPage(completion)
-            case TemplateCatalog.Name.showOnPage: self.showOnPage(arguments, completion)
-            case TemplateCatalog.Name.getPageText: self.pageText(completion)
-            case TemplateCatalog.Name.findOnSite: self.findOnSite(arguments, completion)
-            case TemplateCatalog.Name.readLink: self.readLink(arguments, completion)
-            case TemplateCatalog.Name.openLink: self.openLink(arguments, completion)
-            case TemplateCatalog.Name.getForm: completion(.success(PageResults.getForm(self.snapshot())))
-            case TemplateCatalog.Name.focusFormField: self.focusField(arguments, completion)
-            case TemplateCatalog.Name.fillFormFields: self.fillFields(arguments, completion)
-            case TemplateCatalog.Name.getDiagnostics: self.diagnostics(completion)
-            case TemplateCatalog.Name.reloadPage: self.reload(completion)
-            case TemplateCatalog.Name.getLocation: self.location(completion)
-            case TemplateCatalog.Name.clickElement: self.clickElement(arguments, completion)
-            default: completion(.failure("unavailable"))
-            }
+    /// Runs one call of the template `name`; `approval` is how that call was
+    /// approved when it came without a card (`session`, `allow_all`).
+    private func run(
+        _ name: String,
+        _ arguments: [String: Any],
+        approval: String?,
+        _ completion: @escaping ClarityToolCompletion
+    ) {
+        switch name {
+        case TemplateCatalog.Name.readPage: self.readPage(completion)
+        case TemplateCatalog.Name.showOnPage: self.showOnPage(arguments, completion)
+        case TemplateCatalog.Name.getPageText: self.pageText(completion)
+        case TemplateCatalog.Name.findOnSite: self.findOnSite(arguments, completion)
+        case TemplateCatalog.Name.readLink: self.readLink(arguments, completion)
+        case TemplateCatalog.Name.openLink: self.openLink(arguments, completion)
+        case TemplateCatalog.Name.getForm: completion(.success(PageResults.getForm(self.snapshot())))
+        case TemplateCatalog.Name.focusFormField: self.focusField(arguments, completion)
+        case TemplateCatalog.Name.fillFormFields: self.fillFields(arguments, completion)
+        case TemplateCatalog.Name.getDiagnostics: self.diagnostics(completion)
+        case TemplateCatalog.Name.reloadPage: self.reload(completion)
+        case TemplateCatalog.Name.getLocation: self.location(completion)
+        case TemplateCatalog.Name.clickElement: self.clickElement(arguments, approval: approval, completion)
+        default: completion(.failure("unavailable"))
         }
     }
 
@@ -239,7 +248,11 @@ final class TemplateRuntime {
     /// How long after the press a new screen on top counts as opened by it.
     static let screenSettleSeconds: TimeInterval = 0.6
 
-    private func clickElement(_ arguments: [String: Any], _ completion: @escaping ClarityToolCompletion) {
+    private func clickElement(
+        _ arguments: [String: Any],
+        approval: String?,
+        _ completion: @escaping ClarityToolCompletion
+    ) {
         let screen = snapshot()
         let node: ScreenNode
         switch ClickCheck.target(arguments["target"] as? String ?? "", on: screen) {
@@ -248,6 +261,12 @@ final class TemplateRuntime {
             return
         case .success(let found):
             node = found
+        }
+        if approval != nil, let category = ClickCheck.sensitivePress(
+            node, target: arguments["target"] as? String ?? "", on: screen
+        ) {
+            completion(.failure(InAppApproval.requiredError(category)))
+            return
         }
         let label = ClickCheck.label(node)
         guard let window = ScreenReader.hostWindow() else {

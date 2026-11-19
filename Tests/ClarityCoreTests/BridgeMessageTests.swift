@@ -71,8 +71,22 @@ final class BridgeMessageTests: XCTestCase {
     }
 
     func testNewMessageDefaultsToEmptyText() {
-        assertParse(#"{"action":"newMessage","text":"hi"}"#, .newMessage(text: "hi"))
-        assertParse(#"{"action":"newMessage"}"#, .newMessage(text: ""))
+        assertParse(#"{"action":"newMessage","text":"hi"}"#, .newMessage(text: "hi", ticketId: nil))
+        assertParse(#"{"action":"newMessage"}"#, .newMessage(text: "", ticketId: nil))
+    }
+
+    // A reply that arrives while the app's chat is connected gets no push: the
+    // SDK's own notification stands in, and its tap must open the reply's
+    // conversation, not the chat's start (MessageActionTest.kt, same cases).
+    func testNewMessageCarriesItsConversation() {
+        assertParse(
+            #"{"action":"newMessage","text":"It ships today","ticketId":19}"#,
+            .newMessage(text: "It ships today", ticketId: 19)
+        )
+        assertParse(
+            #"{"action":"newMessage","text":"hi","ticketId":2.5}"#,
+            .newMessage(text: "hi", ticketId: nil)
+        )
     }
 
     func testUnreadCountDefaultsToZero() {

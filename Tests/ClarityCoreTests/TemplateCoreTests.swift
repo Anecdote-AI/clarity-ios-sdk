@@ -706,11 +706,11 @@ final class TemplateBridgeTests: XCTestCase {
         let message = BridgeMessage.parse(
             ##"{"action":"inAppToolCall","callId":"c1","name":"show_on_page","kind":"safe_action","arguments":{},"accentColor":"#FF5500"}"##
         )
-        guard case .inAppToolCall(_, _, .safeAction, _, _, let accent)? = message else { return XCTFail("not parsed") }
+        guard case .inAppToolCall(_, _, .safeAction, _, _, let accent, _)? = message else { return XCTFail("not parsed") }
         XCTAssertEqual(accent, "#FF5500")
 
         let old = BridgeMessage.parse(#"{"action":"inAppToolCall","callId":"c1","name":"read_page"}"#)
-        guard case .inAppToolCall(_, _, _, _, _, let none)? = old else { return XCTFail("not parsed") }
+        guard case .inAppToolCall(_, _, _, _, _, let none, _)? = old else { return XCTFail("not parsed") }
         XCTAssertNil(none)
     }
 

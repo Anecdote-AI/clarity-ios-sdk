@@ -40,13 +40,13 @@ fine.
 
 In Xcode: **File → Add Package Dependencies…** and paste
 `https://github.com/Anecdote-AI/clarity-ios-sdk` (rule: *Up to Next Major
-Version*, from `1.6.0`). Or in `Package.swift`:
+Version*, from `1.7.0`). Or in `Package.swift`:
 
 ```swift
 dependencies: [
     .package(
         url: "https://github.com/Anecdote-AI/clarity-ios-sdk",
-        .upToNextMajor(from: "1.6.0")
+        .upToNextMajor(from: "1.7.0")
     )
 ]
 ```
@@ -279,30 +279,81 @@ way if your build configuration does not map to `DEBUG` as expected.
 
 ## 9. Push notifications (APNs)
 
-Forward your device token so agent replies can reach the device while your
-app is backgrounded:
+When support writes to a customer whose chat is not open, the Support Portal
+sends an APNs **alert** push. iOS shows it by itself — also while your app is
+in the background or not running — and a tap opens the chat at the
+conversation the message belongs to. A device whose chat is connected at that
+moment gets no push: the reply arrives in the chat, or as the local
+notification described in section 6.
+
+Set it up once:
+
+1. In the Support Portal, open **Settings › Channels › Mobile**, open your iOS
+   channel, and under **Push notifications** upload your APNs authentication
+   key (the `.p8` file from your Apple Developer account) with its **Key ID**,
+   your **Team ID** and your app's **Bundle ID**. Choose the sandbox
+   environment for builds signed with a development profile.
+2. Enable the Push Notifications capability, ask for notification permission
+   (the SDK never prompts), register for remote notifications, and forward the
+   device token:
 
 ```swift
 func application(_ application: UIApplication,
                  didRegisterForRemoteNotificationsWithDeviceToken deviceToken: Data) {
     Clarity.setDeviceToken(deviceToken)     // or the hex-string variant
 }
+```
 
-func application(_ application: UIApplication,
-                 didReceiveRemoteNotification userInfo: [AnyHashable: Any],
-                 fetchCompletionHandler completionHandler: @escaping (UIBackgroundFetchResult) -> Void) {
-    if Clarity.isClarityPush(userInfo: userInfo) {
-        _ = Clarity.handlePush(userInfo: userInfo)
-        completionHandler(.newData)
+3. In your `UNUserNotificationCenterDelegate`, route taps to the SDK and decide
+   whether a push shows while your app is in the foreground. Set the delegate
+   in `application(_:didFinishLaunchingWithOptions:)`, so a tap that launches
+   your app reaches it too:
+
+```swift
+func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    willPresent notification: UNNotification,
+    withCompletionHandler completionHandler: @escaping (UNNotificationPresentationOptions) -> Void
+) {
+    if Clarity.isClarityPush(userInfo: notification.request.content.userInfo) {
+        // While the chat is open the reply is already on screen.
+        completionHandler(Clarity.isWidgetVisible ? [] : [.banner, .list, .sound])
         return
     }
-    // …your own pushes…
+    // …your own policy (it also applies to the SDK's local notification)…
+    completionHandler([.banner, .list, .sound])
+}
+
+func userNotificationCenter(
+    _ center: UNUserNotificationCenter,
+    didReceive response: UNNotificationResponse,
+    withCompletionHandler completionHandler: @escaping () -> Void
+) {
+    if Clarity.handleNotificationResponse(response) { // opens that conversation
+        completionHandler()
+        return
+    }
+    // …your own notifications…
 }
 ```
 
-Token registration is forwarded fail-soft; background push delivery
-activates with the platform's mobile push rollout for your organization —
-ask your Clarity contact about availability.
+`Clarity.resetSession()` and an `identify` that switches to a different user
+unbind the device from the previous customer's conversation, so their messages
+stop arriving as pushes on a signed-out phone. The token is kept; the next
+session registers it again.
+
+Clarity's pushes need no `handlePush`: the system displays them, and
+`willPresent` decides in the foreground. `Clarity.handlePush(userInfo:)` is for
+a Clarity payload that arrives without an alert (for example one your own
+server relays as a data message): it shows it as the SDK's local notification,
+whose tap opens the same conversation. For an alert push it shows nothing and
+just returns `true`, so calling it from
+`application(_:didReceiveRemoteNotification:fetchCompletionHandler:)` never
+shows a push twice.
+
+If your app registers Firebase Cloud Messaging tokens on iOS instead of APNs
+tokens (for example through Flutter's `firebase_messaging`), also upload your
+Firebase service account on the same iOS channel.
 
 ## 10. Attachments and the camera
 
@@ -462,6 +513,23 @@ Clarity.registerTool(ClarityTool(
   only, and forgotten on `resetSession()` or when `identify` switches the user.
   Ignored for a tool with `requiresSecurityCheck`, which asks for the card and
   the check every time.
+- Since 1.7.0: how the customer may approve an action. On a card they can
+  choose **Allow once** or **Allow for this chat**, and switch on **Allow all
+  actions** in the chat's **App permissions**, as far as the channel's
+  **Customer approval** mode allows. Give each action a short `label` for its
+  card ("Sign a device out", at most 60 characters) and, where it must always
+  ask, `approval: ClarityToolApproval(sensitive: .payment)`
+  (also `.subscription`, `.accountDeletion`, `.credentials`, `.dataSharing`,
+  `.legal`, `.other`). `ClarityToolApproval(allowForSession: false)` or
+  `(allowAll: false)` keeps a tool out of that mode; `config.inAppToolApproval =
+  ClarityInAppToolApproval(allowAll: false)` narrows the channel's mode for
+  your whole app, never widens it. Payments always ask, and so does a
+  `requiresSecurityCheck` tool. Your registration has the last word: a call
+  that came without a card runs only when it allows that, otherwise the SDK
+  refuses it and the customer gets the card. The ready-made `click_element`
+  does the same for a press that looks like a payment ("Pay now", "Confirm"
+  next to "48.20 EUR", a link to a checkout) or deleting the account. See
+  [Approval modes](https://docs.support.onclarity.com/sdks/in-app-tools#approval-modes).
 - During a voice call, an action can put your app in view while it runs:
   register it with `collapseCallOnAllow: true`, and once the customer taps
   Allow the call folds back to its bubble while the steps run. Every step of
@@ -513,7 +581,7 @@ did not give, it offers nothing and logs why.
 **The channel decides whether the agent gets them.** The agent is offered these
 tools, and your own, only while the app's channel has **Use for chat** (in
 chat) or **Use for voice** (in a call) switched on under **In-app tools** in
-the cabinet. Voice needs chat. The server checks it, so nothing changes in
+the cabinet. The two switches are independent. The server checks it, so nothing changes in
 your code when an admin turns a switch. An action still asks the customer
 first: they tap Allow on the card, or say "yes" in a call.
 
@@ -649,6 +717,7 @@ they can fire.
 | `Clarity.setNavigator(_:)` / `setScreenReloader(_:)` / `recordAppError(_:screen:)` | What the ready-made tools need from your app at run time (since 1.6.0) |
 | `UIView.clarityPrivate` / `.clarityPrivate()` / `.clarityLabel(_:role:)` | Keep a region out of the ready-made tools / name a SwiftUI control for them (since 1.6.0) |
 | `ClarityTool(rememberResult:)` | Keep an action's answer for the session after the customer allowed it once (since 1.6.0) |
+| `ClarityTool(label:approval:)` / `ClarityConfig.inAppToolApproval` | The card's words for an action, whether it always asks, and how far your app lets customers allow actions without a card (since 1.7.0) |
 
 ## Troubleshooting
 
@@ -662,6 +731,11 @@ they can fire.
   channel's current identity secret and sets a valid `exp`.
 - **Replies while closed don't notify** — local notifications require your
   app to have asked for notification permission; the SDK never prompts.
+- **No push while the app is in the background** — check the channel's Push
+  notifications settings in the Support Portal (Key ID, Team ID and a Bundle
+  ID equal to your app's), the sandbox choice against how the build is signed,
+  and that `setDeviceToken` runs after every launch. A device whose chat is
+  connected gets no push by design.
 - **"Take Photo" does nothing** — add `NSCameraUsageDescription` to your
   Info.plist (section 10).
 - **Which URL is it loading?** — `Clarity.previewWidgetUrl(...)` and the

@@ -18,6 +18,7 @@ enum InAppToolValidation {
     static let maxSchemaDescriptionLength = 300
     static let maxDeclarationBytes = 8 * 1024
     static let reservedArgument = "confirmation_text"
+    static let maxLabelLength = 60
     static let maxRevealMessageLength = 80
     static let maxRevealDelaySeconds: TimeInterval = 3
 
@@ -42,6 +43,10 @@ enum InAppToolValidation {
         }
         if let timeout = tool.timeoutSeconds, !(minTimeoutSeconds...maxTimeoutSeconds).contains(timeout) {
             return "timeoutSeconds must be \(minTimeoutSeconds)…\(maxTimeoutSeconds)"
+        }
+        if let label = tool.label,
+           label.trimmingCharacters(in: .whitespacesAndNewlines).unicodeScalars.count > maxLabelLength {
+            return "the label must be at most \(maxLabelLength) characters"
         }
         if let reveal = tool.reveal, let problem = revealProblem(reveal) {
             return problem

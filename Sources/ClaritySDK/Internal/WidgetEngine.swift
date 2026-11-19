@@ -59,6 +59,10 @@ final class WidgetEngine: NSObject {
 
     private var user = ClarityUser()
     private var deviceToken: String?
+    /// The conversation of a push the customer tapped before the page loaded
+    /// (a cold start from a killed app): sent with the pageLoaded flush. Only
+    /// the latest tap matters.
+    private var pendingOpenTicketId: Int?
     private var attributes: [AttributeScope: [String: ClarityAttributeValue]] = [:]
     var pendingEvents: [String] = []
 
@@ -219,8 +223,9 @@ final class WidgetEngine: NSObject {
 
     func dismiss() {
         WidgetHolder.closeRequested = true
-        // A call asked for while loading is off too.
+        // A call asked for while loading is off too, and so is a tapped push.
         pendingVoiceStart = nil
+        pendingOpenTicketId = nil
         // A show that is still loading is CANCELLED, not deferred: the
         // latch alone would not survive, because presentContainer clears it
         // ("a new presentation supersedes a stale close") and onPageLoaded
@@ -336,6 +341,24 @@ final class WidgetEngine: NSObject {
         sendMessageToWebView(OutboundMessage.setDeviceToken(token))
     }
 
+    /// The customer tapped a push about `ticketId`: the page switches the chat
+    /// to that conversation (falling back to its normal start when the session
+    /// cannot read it). The caller shows the widget right after.
+    func openTicket(_ ticketId: Int) {
+        if state == .loaded {
+            pendingOpenTicketId = nil
+            sendMessageToWebView(OutboundMessage.openTicket(ticketId: ticketId))
+        } else {
+            pendingOpenTicketId = ticketId
+        }
+    }
+
+    private func sendPendingOpenTicketToWebView() {
+        guard let ticketId = pendingOpenTicketId else { return }
+        pendingOpenTicketId = nil
+        sendMessageToWebView(OutboundMessage.openTicket(ticketId: ticketId))
+    }
+
     /// Host-requested on-demand sync of the latest ticket state. Warm page:
     /// ask it to refetch the conversation — anything new flows through the
     /// normal reporting path (unread flag, onNewMessage, notification). Cold
@@ -391,6 +414,8 @@ final class WidgetEngine: NSObject {
     private func clearUserScopedState() {
         attributes = [:]
         pendingEvents.removeAll()
+        // A tapped push is the previous user's conversation.
+        pendingOpenTicketId = nil
         currentTicketStatus = nil
     }
 
@@ -412,15 +437,49 @@ final class WidgetEngine: NSObject {
     private func clearWebSession() {
         guard let config else { return }
         beginWipe()
-        WebSessionCleaner.clear(baseUrl: config.baseUrl) { [weak self] in
-            self?.endWipe()
-        }
+        // The token stays (the next page load registers it for the new
+        // session); only the ending session's binding is dropped, read from
+        // its cookie before the wipe deletes it.
+        let token = deviceToken
+        let baseUrl = config.baseUrl
+        WebSessionCleaner.clear(
+            baseUrl: baseUrl,
+            beforeCookiesDelete: { cookies in
+                guard let token else { return }
+                Self.unregisterDevice(
+                    token: token,
+                    sessionIds: DeviceUnregister.sessionIds(fromCookies: cookies),
+                    baseUrl: baseUrl
+                )
+            },
+            completion: { [weak self] in
+                self?.endWipe()
+            }
+        )
         // Belt-and-braces for the currently loaded document; the native wipe
         // above covers persisted storage even when no page is loaded.
         webView?.evaluateJavaScript(
             "try { localStorage.clear(); sessionStorage.clear(); } catch (e) {}",
             completionHandler: nil
         )
+    }
+
+    /// Fire-and-forget: URLSession runs it off the main thread, and a failure
+    /// only costs pushes to a signed-out phone until the binding is replaced.
+    /// The log names neither the token nor the session id.
+    private static func unregisterDevice(token: String, sessionIds: [String], baseUrl: String) {
+        for sessionId in sessionIds {
+            guard let request = DeviceUnregister.request(
+                baseUrl: baseUrl, sessionId: sessionId, deviceToken: token
+            ) else { continue }
+            URLSession.shared.dataTask(with: request) { _, response, error in
+                if let error {
+                    ClarityLog.log("device/unregister failed: \((error as NSError).code)")
+                } else if let status = (response as? HTTPURLResponse)?.statusCode, status != 200 {
+                    ClarityLog.log("device/unregister returned HTTP \(status)")
+                }
+            }.resume()
+        }
     }
 
     /// Count an asynchronous wipe in, so a load requested while it runs
@@ -615,6 +674,7 @@ final class WidgetEngine: NSObject {
         pendingEvents.forEach { sendMessageToWebView($0) }
         pendingEvents.removeAll()
         sendDeviceTokenToWebView()
+        sendPendingOpenTicketToWebView()
         inAppTools.pageDidLoad()
         let voiceStart = pendingVoiceStart
         pendingVoiceStart = nil
@@ -663,6 +723,7 @@ final class WidgetEngine: NSObject {
         // decides whether the developer diagnostic is presented at all.
         let showWasPending = pendingShowMode != nil
         pendingVoiceStart = nil
+        pendingOpenTicketId = nil
         pendingShowMode = nil
         // The failed document is DISCARDED, not parked: WebKit does not abort
         // a timed-out load, so the instance can still fire pageLoaded later —
@@ -791,10 +852,15 @@ final class WidgetEngine: NSObject {
             // superseded WebViews. By the time a page can send .close, the
             // pending-show triple is already consumed; the latch is enough.
             WidgetHolder.closeRequested = true
-        case .newMessage(let text):
+        case .newMessage(let text, let ticketId):
             notify { $0.onNewMessage(text) }
             if !widgetVisible {
-                NotificationHelper.showNewMessage(text, language: config?.language)
+                // While the app's chat is connected the backend sends no push,
+                // so this notification stands in for it: same tap, same
+                // conversation.
+                NotificationHelper.showNewMessage(
+                    text, language: config?.language, ticketId: ticketId
+                )
             }
         case .unreadCountDidChange(let count):
             unreadCount = count
@@ -809,7 +875,7 @@ final class WidgetEngine: NSObject {
             openExternalLink(url)
         case .requestPresentation(let fullScreen):
             applyRequestedPresentation(fullScreen: fullScreen)
-        case .inAppToolCall(let callId, let name, let kind, let argumentsJSON, let timeoutMs, let accentColor):
+        case .inAppToolCall(let callId, let name, let kind, let argumentsJSON, let timeoutMs, let accentColor, let approval):
             debug("in-app tool: \(name) (\(callId))")
             TemplateRuntime.shared.accentColor = OverlayHost.color(hex: accentColor) ?? OverlayHost.defaultAccent
             inAppTools.run(
@@ -817,7 +883,8 @@ final class WidgetEngine: NSObject {
                 name: name,
                 kind: kind,
                 arguments: JSONEncoding.object(from: argumentsJSON) ?? [:],
-                timeoutMs: timeoutMs
+                timeoutMs: timeoutMs,
+                approval: approval
             )
         case .inAppSecurityCheck(let requestId, let tools, let callIds):
             debug("in-app security check for \(tools.count) step(s)")
@@ -869,6 +936,11 @@ final class WidgetEngine: NSObject {
     private func applyTemplates() {
         TemplateRuntime.shared.onChange = { [weak self] in self?.announceInAppTools() }
         TemplateRuntime.shared.apply(config)
+        // What the app lets its customers choose for in-app actions; a
+        // loaded page hears a change.
+        if InAppToolRegistry.shared.updateApprovalModes(config?.inAppToolApproval) {
+            announceInAppTools()
+        }
     }
 
     /// The remembered answers (`rememberResult`) belong to the conversation

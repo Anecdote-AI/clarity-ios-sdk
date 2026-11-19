@@ -93,6 +93,46 @@ enum ClickCheck {
         return result
     }
 
+    /// How much of a control's surroundings is read for an amount, as on the web.
+    static let maxContextText = 600
+
+    /// The words around `node` on the screen, for an amount next to
+    /// "Confirm": every text, across the whole width of the screen, in a band
+    /// from three of the control's heights above it (a price over the button)
+    /// to one height below it (a "You pay 48.20 EUR" line under it). In a
+    /// list that takes in the neighbouring rows' prices too: on purpose, as
+    /// a false hit costs one card and a miss lets a payment run unasked. The
+    /// web reads the control's form, section or row, which can hold text on
+    /// any side as well.
+    static func contextText(_ node: ScreenNode, on screen: ScreenSnapshot) -> String {
+        let height = max(node.rect.height, 1)
+        let top = node.rect.minY - 3 * height
+        let bottom = node.rect.maxY + height
+        let words = screen.nodes
+            .filter { $0.rect != node.rect || $0.name != node.name }
+            .filter { !$0.name.isEmpty && $0.rect.maxY > top && $0.rect.minY < bottom }
+            .map(\.name)
+            .joined(separator: " ")
+        return String(words.prefix(maxContextText))
+    }
+
+    /// Why pressing `node` must ask the customer although they allowed
+    /// presses for the chat (or allowed everything), or nil. Money only, with
+    /// context, as the web's click: the control reads like money ("Pay now",
+    /// "Top up", "Subscribe"); it says to delete or close the account; it is a
+    /// link to a checkout, payment or billing address; or a word that is money
+    /// only in context ("Confirm", "Continue") stands next to an amount with
+    /// a currency in the control or around it. Identical on Android.
+    static func sensitivePress(_ node: ScreenNode, target: String, on screen: ScreenSnapshot) -> String? {
+        let own: [String?] = [target, node.name]
+        if InAppApproval.isAccountClosing(own) { return InAppApproval.accountDeletion }
+        if let category = InAppApproval.sensitiveCategory(of: own) { return category }
+        if node.role == .link, InAppApproval.isMoneyPath(node.url) { return InAppApproval.payment }
+        let context = contextText(node, on: screen)
+        return InAppApproval.hasMoneyContextWord(own) && InAppApproval.hasAmount(own + [context])
+            ? InAppApproval.payment : nil
+    }
+
     /// Marks each node inside a region the app made no-click.
     static func markNoClick(_ nodes: [ScreenNode], regions: [CGRect]) -> [ScreenNode] {
         guard !regions.isEmpty else { return nodes }
