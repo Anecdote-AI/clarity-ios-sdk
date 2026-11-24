@@ -43,8 +43,29 @@ struct WidgetVoice: Equatable {
     /// Once the page measured the bubble; cleared when it shows the call again.
     private(set) var bubbleSize: BubbleSize?
 
-    mutating func status(state: String, label: String) {
+    /// When the host app last ended the call itself (`endedByHost`), until the
+    /// page agrees it is over or a new call is asked for.
+    private(set) var hostEndedAt: Date?
+
+    /// How long after the host ended the call a status from the page saying
+    /// it is still on is one already on its way, not a new call. The page
+    /// reports every change of what the assistant is doing, so one is often
+    /// in flight when the host ends the call: taken at its word it put the
+    /// call back on with nothing on screen, and the host heard `started` and
+    /// a second `ended` later, when the page went away (`resetSession`).
+    static let hostEndGrace: TimeInterval = 2
+
+    mutating func status(state: String, label: String, now: Date = Date()) {
         let active = !state.isEmpty && state != Self.ended
+        if let endedAt = hostEndedAt {
+            if !active {
+                hostEndedAt = nil
+            } else if now.timeIntervalSince(endedAt) < Self.hostEndGrace {
+                return
+            } else {
+                hostEndedAt = nil
+            }
+        }
         self.state = state
         self.label = label
         callActive = active
@@ -93,5 +114,55 @@ struct WidgetVoice: Equatable {
     /// The page is gone: no call survives it.
     mutating func reset() {
         self = WidgetVoice()
+    }
+
+    /// The host app ended the call (`Clarity.dismiss()` with the sheet up):
+    /// over from here, before the page reports it, so the sheet closes instead
+    /// of collapsing.
+    mutating func endedByHost(now: Date = Date()) {
+        status(state: Self.ended, label: "", now: now)
+        hostEndedAt = now
+    }
+
+    /// The host app closed the widget (`Clarity.dismiss()`): a call that is on
+    /// ends with it, and one asked for that the page has not mounted yet is
+    /// called off too, or it would start later in a WebView with no window
+    /// (the page cancels a pending request on `endVoiceCall`). True when the
+    /// page must be told; it ignores the message when nothing is pending.
+    mutating func hostClosed(pageLoaded: Bool, now: Date = Date()) -> Bool {
+        if callActive {
+            endedByHost(now: now)
+            return true
+        }
+        return pageLoaded
+    }
+
+    /// The host app asked for a call: whatever it ended before is behind it.
+    mutating func callRequested() {
+        hostEndedAt = nil
+    }
+
+    /// What the host app hears of the call (`ClarityListener.onVoiceCallEvent`).
+    var phase: VoiceCallPhase {
+        VoiceCallPhase(active: callActive, collapsed: callActive && collapsed)
+    }
+}
+
+/// Whether a call is on and whether it is the bubble: the host app hears every
+/// change of it, once (`ClarityVoiceCallEvent`).
+struct VoiceCallPhase: Equatable {
+    let active: Bool
+    let collapsed: Bool
+
+    static let idle = VoiceCallPhase(active: false, collapsed: false)
+
+    /// The events that take a host from `old` to this phase, in order.
+    func events(since old: VoiceCallPhase) -> [ClarityVoiceCallEvent] {
+        if active != old.active {
+            guard active else { return [.ended] }
+            return collapsed ? [.started, .collapsed] : [.started]
+        }
+        guard active, collapsed != old.collapsed else { return [] }
+        return [collapsed ? .collapsed : .expanded]
     }
 }

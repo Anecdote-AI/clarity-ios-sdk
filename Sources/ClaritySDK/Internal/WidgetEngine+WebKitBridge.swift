@@ -1,5 +1,6 @@
 #if canImport(UIKit)
 import UIKit
+import AVFoundation
 import WebKit
 
 // The WebKit plumbing half of `WidgetEngine`: message-handler intake,
@@ -242,13 +243,14 @@ extension WidgetEngine: WKUIDelegate {
         return nil
     }
 
-    /// getUserMedia gate: page code (current or future) requesting the
+    /// getUserMedia gate. Page code (current or future) requesting the
     /// camera/microphone in a host that lacks the matching usage description
     /// would TCC-kill the process exactly like the file-upload "Take Photo"
-    /// path (see the airbag in `ClarityWidgetViewController.present`). Deny
-    /// up front when unprovisioned — the page gets a catchable
-    /// NotAllowedError; defer to the system prompt only when the host
-    /// carries the keys.
+    /// path (see the airbag in `ClarityWidgetViewController.present`): denied
+    /// up front, the page gets a catchable NotAllowedError. Otherwise the
+    /// app's own permission decides (`MediaCapturePolicy`): WebKit's default
+    /// asked the customer again on every page load, on top of the system
+    /// prompt they had already answered.
     func webView(
         _ webView: WKWebView,
         requestMediaCapturePermissionFor origin: WKSecurityOrigin,
@@ -256,35 +258,102 @@ extension WidgetEngine: WKUIDelegate {
         type: WKMediaCaptureType,
         decisionHandler: @escaping (WKPermissionDecision) -> Void
     ) {
-        let required: [(key: String, provisioned: Bool)]
-        switch type {
-        case .camera:
-            required = [(HostCapabilities.cameraUsageKey, HostCapabilities.cameraCaptureProvisioned)]
-        case .microphone:
-            required = [(HostCapabilities.microphoneUsageKey, HostCapabilities.microphoneCaptureProvisioned)]
-        case .cameraAndMicrophone:
-            required = [
-                (HostCapabilities.cameraUsageKey, HostCapabilities.cameraCaptureProvisioned),
-                (HostCapabilities.microphoneUsageKey, HostCapabilities.microphoneCaptureProvisioned),
-            ]
-        @unknown default:
-            // A capture type this SDK build doesn't know is still capture —
-            // require full A/V provisioning rather than guessing it safe.
-            required = [
-                (HostCapabilities.cameraUsageKey, HostCapabilities.cameraCaptureProvisioned),
-                (HostCapabilities.microphoneUsageKey, HostCapabilities.microphoneCaptureProvisioned),
-            ]
-        }
-        let missing = required.filter { !$0.provisioned }.map(\.key)
-        guard missing.isEmpty else {
-            debug(
-                "media capture denied: \(missing.joined(separator: ", ")) "
-                    + "missing from the host app Info.plist"
-            )
+        let devices = MediaDevice.devices(for: type)
+        let missing = devices.filter { !$0.provisioned }.map(\.usageKey)
+        mediaRequestedSinceBubbleStart = true
+        switch MediaCapturePolicy.verdict(
+            missingUsageKeys: missing, permissions: devices.map(\.permission)
+        ) {
+        case .deny:
+            if missing.isEmpty {
+                debug("media capture denied: the app has no permission for it")
+            } else {
+                debug(
+                    "media capture denied: \(missing.joined(separator: ", ")) "
+                        + "missing from the host app Info.plist"
+                )
+            }
             decisionHandler(.deny)
-            return
+        case .grant:
+            decisionHandler(.grant)
+        case .askSystem:
+            awaitingMediaPermission = true
+            MediaDevice.requestAll(devices) { [weak self] granted in
+                self?.awaitingMediaPermission = false
+                decisionHandler(granted ? .grant : .deny)
+            }
         }
-        decisionHandler(.prompt)
+    }
+}
+
+/// One capture device the page asked for, as the app is provisioned and
+/// permitted for it.
+private enum MediaDevice {
+    case microphone
+    case camera
+
+    static func devices(for type: WKMediaCaptureType) -> [MediaDevice] {
+        switch type {
+        case .camera: return [.camera]
+        case .microphone: return [.microphone]
+        // A capture type this SDK build doesn't know is still capture —
+        // require full A/V rather than guessing it safe.
+        case .cameraAndMicrophone: return [.camera, .microphone]
+        @unknown default: return [.camera, .microphone]
+        }
+    }
+
+    var usageKey: String {
+        switch self {
+        case .microphone: return HostCapabilities.microphoneUsageKey
+        case .camera: return HostCapabilities.cameraUsageKey
+        }
+    }
+
+    var provisioned: Bool {
+        switch self {
+        case .microphone: return HostCapabilities.microphoneCaptureProvisioned
+        case .camera: return HostCapabilities.cameraCaptureProvisioned
+        }
+    }
+
+    var permission: MediaCapturePolicy.SystemPermission {
+        switch self {
+        case .microphone:
+            switch AVAudioSession.sharedInstance().recordPermission {
+            case .granted: return .granted
+            case .denied: return .denied
+            case .undetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        case .camera:
+            switch AVCaptureDevice.authorizationStatus(for: .video) {
+            case .authorized: return .granted
+            case .denied, .restricted: return .denied
+            case .notDetermined: return .undetermined
+            @unknown default: return .undetermined
+            }
+        }
+    }
+
+    /// The system prompt for each device not yet answered, one after the
+    /// other; `done` on the main thread with whether all were allowed.
+    static func requestAll(_ devices: [MediaDevice], done: @escaping (Bool) -> Void) {
+        guard let first = devices.first else { return MainThread.run { done(true) } }
+        let rest = Array(devices.dropFirst())
+        first.request { granted in
+            guard granted else { return MainThread.run { done(false) } }
+            requestAll(rest, done: done)
+        }
+    }
+
+    private func request(_ answer: @escaping (Bool) -> Void) {
+        switch self {
+        case .microphone:
+            AVAudioSession.sharedInstance().requestRecordPermission(answer)
+        case .camera:
+            AVCaptureDevice.requestAccess(for: .video, completionHandler: answer)
+        }
     }
 }
 

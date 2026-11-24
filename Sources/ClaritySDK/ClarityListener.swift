@@ -31,6 +31,9 @@ public protocol ClarityListener: AnyObject {
     func onChatSteppedAside()
     /// The chat came back after stepping aside.
     func onChatReturned()
+    /// The voice call started, collapsed to its bubble, came back to the
+    /// sheet, or ended. `Clarity.isVoiceCallActive` reads the current state.
+    func onVoiceCallEvent(_ event: ClarityVoiceCallEvent)
 }
 
 public extension ClarityListener {
@@ -44,4 +47,5 @@ public extension ClarityListener {
     func onDebugEvent(_ event: String) {}
     func onChatSteppedAside() {}
     func onChatReturned() {}
+    func onVoiceCallEvent(_ event: ClarityVoiceCallEvent) {}
 }

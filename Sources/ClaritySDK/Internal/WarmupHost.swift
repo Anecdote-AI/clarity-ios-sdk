@@ -24,7 +24,7 @@ import WebKit
 enum WarmupHost {
 
     private static var host: UIView?
-    private static var windowObserver: NSObjectProtocol?
+    private static var windowObservers: [NSObjectProtocol] = []
 
     /// Two window-heights above the top edge (one would put the host's
     /// bottom exactly AT the edge — a rounding error or transform away from
@@ -42,17 +42,27 @@ enum WarmupHost {
             return
         }
         ClarityLog.log("warmup: no window yet — will attach when one appears")
-        guard windowObserver == nil else { return }
-        windowObserver = NotificationCenter.default.addObserver(
-            forName: UIWindow.didBecomeKeyNotification,
-            object: nil,
-            queue: .main
-        ) { [weak webView] _ in
-            guard let webView else {
-                stopWaitingForWindow()
-                return
+        guard windowObservers.isEmpty else { return }
+        // Not only a window becoming key: an app prewarmed or launched into
+        // the background (SwiftUI included) has its window key already when
+        // its scene comes to the foreground, and no key change ever follows —
+        // the load then waited for good. The scene's activation, and a window
+        // becoming visible, re-try too.
+        let names: [Notification.Name] = [
+            UIWindow.didBecomeKeyNotification,
+            UIWindow.didBecomeVisibleNotification,
+            UIScene.willEnterForegroundNotification,
+            UIScene.didActivateNotification,
+        ]
+        windowObservers = names.map { name in
+            NotificationCenter.default.addObserver(forName: name, object: nil, queue: .main) {
+                [weak webView] _ in
+                guard let webView else {
+                    stopWaitingForWindow()
+                    return
+                }
+                if tryAttach(webView) { stopWaitingForWindow() }
             }
-            if tryAttach(webView) { stopWaitingForWindow() }
         }
     }
 
@@ -76,7 +86,13 @@ enum WarmupHost {
 
     private static func tryAttach(_ webView: WKWebView) -> Bool {
         // Already in a window: presented, or hosted here by a previous call.
-        if webView.window != nil { return true }
+        // Not a window that left the screen (a launch or onboarding window
+        // the app replaced, one of a scene now in the background): WebKit
+        // suspends the page there as it does windowless, and the load would
+        // never finish. The host moves to a live window instead.
+        if let current = webView.window {
+            if isLive(current) || webView.superview !== host { return true }
+        }
         guard let window = ActiveWindow.anyWindow() else { return false }
 
         let host = self.host ?? {
@@ -104,11 +120,15 @@ enum WarmupHost {
         return true
     }
 
+    private static func isLive(_ window: UIWindow) -> Bool {
+        guard !window.isHidden, let scene = window.windowScene else { return false }
+        return scene.activationState == .foregroundActive
+            || scene.activationState == .foregroundInactive
+    }
+
     private static func stopWaitingForWindow() {
-        if let windowObserver {
-            NotificationCenter.default.removeObserver(windowObserver)
-        }
-        windowObserver = nil
+        windowObservers.forEach(NotificationCenter.default.removeObserver)
+        windowObservers = []
     }
 }
 #endif

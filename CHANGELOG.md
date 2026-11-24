@@ -1,5 +1,51 @@
 # Changelog
 
+## 1.7.1
+
+Voice call state for the app, calls that survive the chat closing, and `show(message:)`.
+
+- **Open the chat with a message already sent**: `Clarity.show(message:mode:sheetHeightFraction:)` presents
+  the widget and sends `message` as the customer's message, as if they had
+  typed it. From the chat's home screen the widget opens a conversation first;
+  in an open conversation the message goes there; over a closed one it starts
+  a new conversation for it. Sent once (bridge action `sendMessage` with
+  `text`, never logged); `dismiss()`, a tapped push and a channel change
+  (`updateConfig`) before the chat has sent it drop it. Needs a chat that knows
+  `sendMessage`; an older one ignores it and only opens.
+- **Voice call state for the app**: `ClarityListener.onVoiceCallEvent(_:)`
+  (`ClarityVoiceCallEvent`: `started`, `collapsed`, `expanded`, `ended`) and
+  `Clarity.isVoiceCallActive`.
+- **Closing the chat during a voice call** (its ✕, the page's ✕, a swipe
+  down) collapses the call to its bubble; before, the sheet went and the call
+  went on talking with nothing on screen, and `startVoiceCall(.bubble)` then
+  showed nothing. `Clarity.dismiss()` during a call in the sheet ends the call,
+  as it already did in the bubble. `startVoiceCall` with a call already on
+  shows that call; `startVoiceCall(.bubble)` with the call on in the sheet
+  collapses it to the bubble (as on Android) instead of doing nothing.
+- **No second `ended` after the app ended a call**: a status the page sent
+  before it heard `dismiss()` no longer puts the call back on, so the app no
+  longer heard `started` and later another `ended` (on `resetSession()`).
+- **`startVoiceCall(.sheet)` hung on its spinner** when the page was already
+  loaded: the call started in the hidden WebView, whose microphone request
+  WebKit holds without asking. The call now starts once the sheet is on
+  screen.
+- **The microphone is no longer asked for on every page load**: once the app
+  has the system's permission the chat gets it; not asked yet, the system
+  prompt shows once (WebKit's own per-load prompt is gone).
+- **A call asked for in the bubble no longer gives up after 8 s** while the
+  customer answers the microphone prompt or the call is still connecting; the
+  chat opens when the page reports the call cannot start, or after 45 s.
+- **`updateConfig` with another channel, organization, base URL or app id
+  starts a fresh web session**: the previous channel's conversation, kept in
+  the widget's cookies and storage, no longer comes back on the new one.
+  The device's push binding to the previous channel's session is dropped too,
+  and a tapped push the page had not opened yet is forgotten.
+- **Preloading before the app has a live window**: a load started while the
+  app was launching or prewarmed in the background, or hosted in a window the
+  app then replaced, finishes once a window is on screen (scene activation,
+  a window becoming visible, `show()`), instead of waiting for a key-window
+  change that never came.
+
 ## 1.7.0
 
 Push notifications that open their conversation, sign-out that stops the

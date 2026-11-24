@@ -40,13 +40,13 @@ fine.
 
 In Xcode: **File → Add Package Dependencies…** and paste
 `https://github.com/Anecdote-AI/clarity-ios-sdk` (rule: *Up to Next Major
-Version*, from `1.7.0`). Or in `Package.swift`:
+Version*, from `1.7.1`). Or in `Package.swift`:
 
 ```swift
 dependencies: [
     .package(
         url: "https://github.com/Anecdote-AI/clarity-ios-sdk",
-        .upToNextMajor(from: "1.7.0")
+        .upToNextMajor(from: "1.7.1")
     )
 ]
 ```
@@ -178,8 +178,16 @@ platform; use `jwt` instead.
 Clarity.show()                        // config's default presentation
 Clarity.show(mode: .bottomSheet, sheetHeightFraction: 0.85)
 Clarity.show(mode: .fullScreen)
+Clarity.show(message: "My order #1042 has not arrived")  // sends it as the customer
 Clarity.dismiss()
 ```
+
+`Clarity.show(message:)` opens the chat with the customer's first words
+already sent, as if they had typed them — for a "Get help with this order"
+button. From the chat's home screen it opens a conversation first; in an
+open conversation the message goes there; over a closed conversation it
+starts a new one and sends the message there. It is sent once, and
+`dismiss()` before the chat has sent it drops it.
 
 The widget only appears after the chat page reports itself authenticated
 and painted. If it cannot load, the failure surfaces through the listener
@@ -385,8 +393,9 @@ too, so it is opt-in the same way — declare a microphone usage description:
 ```
 
 With the key present the SDK tells the chat it may offer the microphone,
-and iOS shows its standard permission prompt on first use. Without it the
-chat shows no microphone button at all, and any capture request is denied
+and iOS shows its standard permission prompt on first use; once your app is
+allowed, the chat uses the microphone without asking again. Without the key
+the chat shows no microphone button at all, and any capture request is denied
 up front rather than letting iOS terminate your app.
 
 During a voice call the chat's header has a collapse arrow: the chat gives
@@ -401,8 +410,15 @@ on it says so); let go, it sticks to the nearer side. An in-app tool that
 shows something in your app during a call collapses the chat the same way
 instead of bringing it back. Your app's own `Clarity.stepAside` steps the chat
 aside as usual during a call, and you still hear `onChatSteppedAside` /
-`onChatReturned`. `Clarity.dismiss()` while the call is in the bubble ends the
-call: nothing would be left on screen to show it.
+`onChatReturned`. Closing the chat during a call (its ✕, a swipe down)
+collapses the call to the bubble rather than hiding it. `Clarity.dismiss()`
+during a call ends it, in the sheet or in the bubble: nothing would be left on
+screen to show it.
+
+`ClarityListener.onVoiceCallEvent(_:)` tells your app when a call starts,
+collapses to the bubble, comes back to the sheet and ends
+(`ClarityVoiceCallEvent`), and `Clarity.isVoiceCallActive` says whether one is
+on now.
 
 To open the voice assistant straight away instead of the chat — from a "Talk
 to us" button, say — call:
@@ -414,7 +430,8 @@ Clarity.startVoiceCall(.bubble)     // collapsed from the start
 
 The call starts in a conversation of the customer's; `.bubble` shows only the
 bubble over your app (iOS asks for the microphone the first time). On a
-channel without voice the chat opens instead.
+channel without voice the chat opens instead. A call already on is shown, not
+started again: `.bubble` brings back its bubble, `.sheet` opens it.
 
 ## 11. In-app tools (the agent acts inside your app)
 
@@ -704,7 +721,9 @@ they can fire.
 | `Clarity.refresh()` | On-demand sync of ticket status + missed replies |
 | `Clarity.show(mode:sheetHeightFraction:)` / `dismiss()` | Presentation |
 | `Clarity.show(mode:sheetHeightFraction:from:)` | Present from a pinned view controller (multi-scene hosts) |
+| `Clarity.show(message:mode:sheetHeightFraction:)` | Present and send `message` as the customer's message |
 | `Clarity.isWidgetVisible` | True while the widget is on screen |
+| `Clarity.startVoiceCall(_:)` / `isVoiceCallActive` | Open the voice assistant / whether a call is on |
 | `Clarity.currentTicketStatus` | Last known ticket status (`"open"`/`"closed"`) |
 | `Clarity.setUserAttributes` / `setTicketAttributes` / `logEvent` | Context |
 | `Clarity.setDeviceToken(Data/String)` | APNs forwarding |

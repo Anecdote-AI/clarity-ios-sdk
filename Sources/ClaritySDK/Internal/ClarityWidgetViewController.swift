@@ -552,6 +552,20 @@ final class ClarityWidgetViewController: UIViewController {
     private func performLatchedClose() {
         guard !isModeSwitch else { return }
         guard presentingViewController != nil, !isBeingDismissed else { return }
+        if engine.voice.callActive {
+            // The customer closed the sheet during a call (the ✕, the page's
+            // ✕, the header swipe): the call goes on, so it collapses to its
+            // bubble rather than talking on with nothing on screen. The host's
+            // `dismiss()` ended the call before it got here.
+            if canCollapseToBubble {
+                WidgetHolder.closeRequested = false
+                engine.collapseVoiceCallRequested()
+                return
+            }
+            // Something over the sheet keeps it from collapsing: the call ends
+            // with it instead of going on hidden.
+            engine.endVoiceCallWithSheet()
+        }
         dismissAndComplete(animated: true)
     }
 
@@ -1013,6 +1027,16 @@ extension ClarityWidgetViewController: UIGestureRecognizerDelegate {
 // MARK: - Drag-to-dismiss
 
 extension ClarityWidgetViewController: UIAdaptivePresentationControllerDelegate {
+
+    /// During a call the swipe down collapses the call to its bubble
+    /// (`presentationControllerDidAttemptToDismiss`), as the ✕ does.
+    func presentationControllerShouldDismiss(_ presentationController: UIPresentationController) -> Bool {
+        !(engine.voice.callActive && canCollapseToBubble)
+    }
+
+    func presentationControllerDidAttemptToDismiss(_ presentationController: UIPresentationController) {
+        engine.collapseVoiceCallRequested()
+    }
 
     func presentationControllerWillDismiss(_ presentationController: UIPresentationController) {
         // Route the interactive dismissal through the same latch so the page

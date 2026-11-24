@@ -101,6 +101,12 @@ enum OutboundMessage {
         payload(action: "refreshConversation", fields: [:])
     }
 
+    /// `Clarity.show(message:)`: the page sends `text` as the customer's
+    /// message once a chat can take it. Never logged (`loggableFields`).
+    static func sendMessage(_ text: String) -> String {
+        payload(action: "sendMessage", fields: ["text": text])
+    }
+
     /// Fields that may appear in a log line: SDK-generated, never
     /// host-supplied. `visible` is load-bearing for diagnosis — unread-badge
     /// and notification timing questions are answered by the order of the

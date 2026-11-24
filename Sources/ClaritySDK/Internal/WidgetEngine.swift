@@ -84,8 +84,22 @@ final class WidgetEngine: NSObject {
     /// host owns its controllers.
     weak var pendingPresenter: UIViewController?
 
-    /// The page's voice call, as it reports it (`voiceCallStatus`).
-    var voice = WidgetVoice()
+    /// The page's voice call, as it reports it (`voiceCallStatus`). The host
+    /// hears every change of whether a call is on and whether it is the bubble.
+    var voice = WidgetVoice() {
+        didSet { reportVoiceCallChange(from: oldValue.phase) }
+    }
+
+    /// A call asked for in the sheet starts once the sheet is on screen
+    /// (`startVoiceCallIfAsked`).
+    var voiceStartOnAppear = false
+
+    /// The system's microphone or camera prompt is up for the page.
+    var awaitingMediaPermission = false
+
+    /// The page asked for the microphone since the call was asked for in the
+    /// bubble: it is starting the call (`BubbleStartWatch`).
+    var mediaRequestedSinceBubbleStart = false
 
     /// The call collapsed to its bubble (`WidgetEngine+VoiceCall`); nil while
     /// the chat is a sheet, or closed.
@@ -104,6 +118,9 @@ final class WidgetEngine: NSObject {
 
     /// `startVoiceCall` before the page loaded: the call starts with it.
     var pendingVoiceStart: ClarityVoicePresentation?
+
+    /// `show(message:)` before the page loaded: sent with the flush.
+    var pendingHostMessage = PendingHostMessage()
 
     /// The host heard the chat step aside, so it hears it come back.
     var hostHeardAside = false
@@ -171,13 +188,26 @@ final class WidgetEngine: NSObject {
         // different conversation — the cached status would otherwise keep
         // reporting the previous one's state until the new page happens
         // to emit a status. Presentation-only updates keep it.
-        let identityChanged = self.config.map { $0.isAnotherConversation(than: config) } ?? false
+        let previous = self.config
+        let identityChanged = previous.map { $0.isAnotherConversation(than: config) } ?? false
         self.config = config
         if identityChanged {
             currentTicketStatus = nil
+            // A tapped push the page has not opened yet is the previous
+            // channel's conversation, and a `show(message:)` text still
+            // waiting was meant for it too (ACX-2288 #9).
+            pendingOpenTicketId = nil
+            pendingHostMessage.cancel()
             // An answer remembered for one org or channel (`rememberResult`)
             // must not be replayed, without a card, to another.
             forgetInAppSession()
+            // The conversation lives in the widget's cookies and storage: kept,
+            // the new channel's page resumed the previous channel's session.
+            // Both sites are wiped when the base URL changed too.
+            clearWebSession()
+            if let previous, previous.baseUrl != config.baseUrl {
+                clearWebSession(baseUrl: previous.baseUrl)
+            }
         }
         applyTemplates()
         resetWebView()
@@ -198,7 +228,10 @@ final class WidgetEngine: NSObject {
         keepingVoiceStart: Bool = false
     ) {
         // The last command wins: a call asked for while loading is off.
-        if !keepingVoiceStart { pendingVoiceStart = nil }
+        if !keepingVoiceStart {
+            pendingVoiceStart = nil
+            voiceStartOnAppear = false
+        }
         switch state {
         case .loaded:
             // A collapsed call is the widget on screen already: it opens again.
@@ -213,6 +246,9 @@ final class WidgetEngine: NSObject {
             pendingShowMode = mode
             pendingSheetFraction = sheetHeightFraction
             pendingPresenter = presenter
+            // A load started before the app had a window to host it in can
+            // be waiting for one still: there is one now.
+            if let webView { WarmupHost.attach(webView) }
         case .idle, .failed:
             pendingShowMode = mode
             pendingSheetFraction = sheetHeightFraction
@@ -222,9 +258,16 @@ final class WidgetEngine: NSObject {
     }
 
     func dismiss() {
+        // The host closes the widget: a call in the sheet ends with it rather
+        // than going on talking with nothing on screen. (The customer's own
+        // close collapses it to the bubble instead.)
+        if collapsedCall == nil { endVoiceCallOnHostClose() }
+        voiceStartOnAppear = false
         WidgetHolder.closeRequested = true
-        // A call asked for while loading is off too, and so is a tapped push.
+        // A call asked for while loading is off too, and so are a message and
+        // a tapped push.
         pendingVoiceStart = nil
+        pendingHostMessage.cancel()
         pendingOpenTicketId = nil
         // A show that is still loading is CANCELLED, not deferred: the
         // latch alone would not survive, because presentContainer clears it
@@ -341,10 +384,26 @@ final class WidgetEngine: NSObject {
         sendMessageToWebView(OutboundMessage.setDeviceToken(token))
     }
 
+    /// `Clarity.show(message:)`: the text goes to the page now if it is up,
+    /// else with the pageLoaded flush. The page sends it as the customer's
+    /// message once a chat can take it.
+    func sendHostMessage(_ text: String) {
+        // A tapped push the page has not opened yet decides the conversation:
+        // this text would be sent into it right after, so it is dropped.
+        if pendingOpenTicketId != nil { return }
+        if let now = pendingHostMessage.request(text, pageLoaded: state == .loaded) {
+            sendMessageToWebView(OutboundMessage.sendMessage(now))
+        }
+    }
+
     /// The customer tapped a push about `ticketId`: the page switches the chat
     /// to that conversation (falling back to its normal start when the session
     /// cannot read it). The caller shows the widget right after.
     func openTicket(_ ticketId: Int) {
+        // The customer's tap outranks a `show(message:)` still waiting
+        // (ACX-2288 #9): that text was meant for a new conversation, and sent
+        // now it would land in the one the push opens.
+        pendingHostMessage.cancel()
         if state == .loaded {
             pendingOpenTicketId = nil
             sendMessageToWebView(OutboundMessage.openTicket(ticketId: ticketId))
@@ -414,8 +473,10 @@ final class WidgetEngine: NSObject {
     private func clearUserScopedState() {
         attributes = [:]
         pendingEvents.removeAll()
-        // A tapped push is the previous user's conversation.
+        // A tapped push, and a text waiting to be sent as the customer, are the
+        // previous user's.
         pendingOpenTicketId = nil
+        pendingHostMessage.cancel()
         currentTicketStatus = nil
     }
 
@@ -434,14 +495,14 @@ final class WidgetEngine: NSObject {
     /// with the host app's own web content). Ends the current visitor session
     /// so the next page load starts fresh instead of resurrecting the
     /// previous user.
-    private func clearWebSession() {
-        guard let config else { return }
+    private func clearWebSession(baseUrl: String? = nil) {
+        guard let baseUrl = baseUrl ?? config?.baseUrl else { return }
         beginWipe()
         // The token stays (the next page load registers it for the new
         // session); only the ending session's binding is dropped, read from
-        // its cookie before the wipe deletes it.
+        // its cookie before the wipe deletes it. It is the wiped host's own
+        // session: a channel switch wipes the previous channel's.
         let token = deviceToken
-        let baseUrl = config.baseUrl
         WebSessionCleaner.clear(
             baseUrl: baseUrl,
             beforeCookiesDelete: { cookies in
@@ -519,6 +580,8 @@ final class WidgetEngine: NSObject {
 
     func resetWebView() {
         pendingVoiceStart = nil
+        voiceStartOnAppear = false
+        awaitingMediaPermission = false
         loadTimeoutWork.cancel()
         loadGeneration += 1
         clearPendingShow()
@@ -676,10 +739,14 @@ final class WidgetEngine: NSObject {
         sendDeviceTokenToWebView()
         sendPendingOpenTicketToWebView()
         inAppTools.pageDidLoad()
+        if let message = pendingHostMessage.takeOnPageLoaded() {
+            sendMessageToWebView(OutboundMessage.sendMessage(message))
+        }
         let voiceStart = pendingVoiceStart
         pendingVoiceStart = nil
+        // In the sheet, once it is on screen (`startVoiceCallIfAsked`).
         if voiceStart == .sheet {
-            sendMessageToWebView(startVoiceCallMessage(collapsed: false))
+            voiceStartOnAppear = true
         }
         if voiceStart == .bubble {
             startInBubble()
@@ -723,6 +790,7 @@ final class WidgetEngine: NSObject {
         // decides whether the developer diagnostic is presented at all.
         let showWasPending = pendingShowMode != nil
         pendingVoiceStart = nil
+        pendingHostMessage.cancel()
         pendingOpenTicketId = nil
         pendingShowMode = nil
         // The failed document is DISCARDED, not parked: WebKit does not abort
@@ -1070,6 +1138,13 @@ final class WidgetEngine: NSObject {
     func notify(_ block: @escaping (ClarityListener) -> Void) {
         guard let listener else { return }
         MainThread.run { block(listener) }
+    }
+
+    private func reportVoiceCallChange(from old: VoiceCallPhase) {
+        for event in voice.phase.events(since: old) {
+            debug("voice: call \(event.rawValue)")
+            notify { $0.onVoiceCallEvent(event) }
+        }
     }
 
     func reportError(kind: ClarityError.Kind, code: Int, message: String) {

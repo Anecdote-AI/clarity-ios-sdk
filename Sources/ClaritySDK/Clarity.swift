@@ -62,8 +62,10 @@ public enum Clarity {
     }
 
     /// Replace the configuration at runtime. A changed config drops the warm
-    /// WebView; the next open starts a fresh page (the conversation itself
-    /// lives in cookies and survives unless the identity changes).
+    /// WebView; the next open starts a fresh page. The conversation lives in
+    /// the widget's cookies: it survives a change of presentation options,
+    /// and starts afresh when the organization, integration key, base URL or
+    /// app id changes (another channel's conversation is not this one's).
     public static func updateConfig(_ config: ClarityConfig) {
         #if canImport(UIKit)
         onEngine { $0.updateConfig(config) }
@@ -188,6 +190,32 @@ public enum Clarity {
         #endif
     }
 
+    /// Present the support widget and send `message` as the customer's
+    /// message, as if they had typed it — for a "Get help with this order"
+    /// button that should open the chat already asking. From the chat's home
+    /// screen the widget opens a conversation first, as "Start conversation"
+    /// would; in an open conversation the message goes there; over a closed
+    /// one it starts a new conversation for it. Sent once: a later `show()`
+    /// does not repeat it, and `dismiss()` before the chat has sent it drops
+    /// it. Blank text only opens the widget.
+    public static func show(
+        message: String,
+        mode: PresentationMode? = nil,
+        sheetHeightFraction: Double? = nil
+    ) {
+        #if canImport(UIKit)
+        onEngine { engine in
+            guard let config = engine.config else { return }
+            engine.show(
+                mode: mode ?? config.presentationMode,
+                sheetHeightFraction: sheetHeightFraction,
+                presenter: nil
+            )
+            engine.sendHostMessage(message)
+        }
+        #endif
+    }
+
     #if canImport(UIKit)
     /// Present the support widget from a specific view controller instead of
     /// the SDK's top-view-controller walk. Use it when your app runs multiple
@@ -236,8 +264,10 @@ public enum Clarity {
     }
 
     /// Dismiss the widget if it is on screen. The page keeps running warm so
-    /// reopening is instant and replies keep arriving. A voice call collapsed
-    /// to its bubble ends with it: nothing would be left on screen to show it.
+    /// reopening is instant and replies keep arriving. A voice call ends with
+    /// it, in the sheet or as the bubble: nothing would be left on screen to
+    /// show it. (The customer closing the sheet during a call collapses it to
+    /// the bubble instead.)
     public static func dismiss() {
         #if canImport(UIKit)
         onEngine { $0.dismiss() }
@@ -288,6 +318,17 @@ public enum Clarity {
     public static var isWidgetVisible: Bool {
         #if canImport(UIKit)
         return MainThread.sync { WidgetHolder.presentedContainer != nil }
+        #else
+        return false
+        #endif
+    }
+
+    /// True while a voice call is on, in the sheet or as the bubble — also
+    /// while the widget is closed with the call going on. Main-thread
+    /// confined; changes arrive via `ClarityListener.onVoiceCallEvent`.
+    public static var isVoiceCallActive: Bool {
+        #if canImport(UIKit)
+        return MainThread.sync { controller.voice.callActive }
         #else
         return false
         #endif

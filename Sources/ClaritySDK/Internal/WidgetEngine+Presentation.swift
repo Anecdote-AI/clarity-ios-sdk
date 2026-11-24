@@ -223,6 +223,7 @@ extension WidgetEngine {
     func widgetDidClose() {
         WidgetHolder.closeRequested = false
         reopeningAfterLostCall = false
+        voiceStartOnAppear = false
         // Opened again, the widget is the sheet, never a bubble.
         voice.expand()
         inAppReveals.chatClosed()
@@ -246,6 +247,7 @@ extension WidgetEngine {
             // the now-empty off-screen host.
             WarmupHost.releaseIfEmpty()
             if finishVoiceExpand(into: container) { return }
+            startVoiceCallIfAsked()
             if reopeningAfterLostCall {
                 reopeningAfterLostCall = false
                 return

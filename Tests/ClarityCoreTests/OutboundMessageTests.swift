@@ -55,6 +55,15 @@ final class OutboundMessageTests: XCTestCase {
         XCTAssertEqual(object.count, 1, "action-only payload — no extra fields")
     }
 
+    func testSendMessage() throws {
+        let payload = OutboundMessage.sendMessage("My card is blocked")
+        let object = try parse(payload)
+        XCTAssertEqual(object["action"] as? String, "sendMessage")
+        XCTAssertEqual(object["text"] as? String, "My card is blocked")
+        // The customer's words never reach the device log.
+        XCTAssertEqual(OutboundMessage.loggableSummary(ofPayload: payload), "sendMessage")
+    }
+
     /// A tapped push opens its conversation; the page reads `ticketId` as a
     /// JSON number and ignores the tap otherwise.
     func testOpenTicketCarriesTheIdAsANumber() throws {

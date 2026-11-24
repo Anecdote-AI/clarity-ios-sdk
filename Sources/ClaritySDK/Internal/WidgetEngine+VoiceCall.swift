@@ -37,6 +37,27 @@ extension WidgetEngine {
         }
     }
 
+    /// The sheet closes during a call it could not collapse: the call ends
+    /// with it rather than going on with nothing on screen.
+    func endVoiceCallWithSheet() {
+        guard voice.callActive else { return }
+        debug("voice: the sheet closed during the call, ending it")
+        sendMessageToWebView(OutboundMessage.endVoiceCall())
+        voice.endedByHost()
+    }
+
+    /// The host app closed the widget (`Clarity.dismiss()`), in the sheet or as
+    /// the bubble: the call ends with it, including one asked for that the
+    /// page has not reported yet. Marked over here, before the page answers,
+    /// so the close that follows reads as `ended`, never as `expanded`.
+    func endVoiceCallOnHostClose() {
+        var next = voice
+        guard next.hostClosed(pageLoaded: state == .loaded) else { return }
+        debug("voice: the host closed the widget, ending the call")
+        sendMessageToWebView(OutboundMessage.endVoiceCall())
+        voice = next
+    }
+
     /// The page's collapse arrow. Only a sheet that is fully on screen
     /// collapses: one still sliding in or out has nowhere to go from.
     func collapseVoiceCallRequested() {
@@ -149,24 +170,36 @@ extension WidgetEngine {
     /// in the sheet, or collapsed to the bubble from the start (which needs a
     /// window scene of the app's to stand in).
     func startVoiceCall(_ presentation: ClarityVoicePresentation) {
-        // A collapsed call is the voice assistant on screen already.
-        if collapsedCall != nil {
-            if presentation == .sheet { expandVoiceCall() }
+        voice.callRequested()
+        // A call on in the sheet is the voice assistant on screen already: the
+        // bubble collapses it there, as the page's own collapse arrow does
+        // (Android parity), and the sheet leaves it as it is. Sent to the page
+        // again it started nothing, and the bubble never came.
+        if voice.callActive, collapsedCall == nil, WidgetHolder.presentedContainer != nil {
+            if VoiceStartRoute.collapsesLiveCall(presentation) {
+                collapseVoiceCallRequested()
+            }
+            return
+        }
+        // A collapsed call is the voice assistant on screen already: the sheet
+        // opens it, and the bubble makes sure it is seen.
+        if let call = collapsedCall {
+            if presentation == .sheet {
+                expandVoiceCall()
+            } else {
+                call.window.showIfWaiting()
+            }
             return
         }
         guard let config else { return }
+        // A call still on with nothing on screen (a page that predates the
+        // collapse on close): the bubble shows it rather than starting another.
+        if presentation == .bubble, showLiveCallInBubble() { return }
         let inBubble = presentation == .bubble
             && WidgetHolder.presentedContainer == nil
             && ActiveWindow.anyWindow()?.windowScene != nil
         guard inBubble else {
-            if state == .loaded {
-                sendMessageToWebView(startVoiceCallMessage(collapsed: false))
-            } else {
-                pendingVoiceStart = .sheet
-            }
-            if WidgetHolder.presentedContainer == nil {
-                show(mode: config.presentationMode, sheetHeightFraction: nil, keepingVoiceStart: true)
-            }
+            startVoiceCallInSheet(config: config)
             return
         }
         // The last command wins: a chat asked for while loading is off.
@@ -180,6 +213,53 @@ extension WidgetEngine {
             pendingVoiceStart = .bubble
             startLoading()
         }
+    }
+
+    /// The call in the sheet starts once the sheet is on screen: WebKit holds
+    /// a hidden page's microphone request without asking or answering, so a
+    /// call started in the windowless WebView sat on its spinner for good.
+    private func startVoiceCallInSheet(config: ClarityConfig) {
+        let sheetOnScreen = WidgetHolder.presentedContainer?.viewIfLoaded?.window != nil
+        switch VoiceStartRoute.sheetStart(pageLoaded: state == .loaded, sheetOnScreen: sheetOnScreen) {
+        case .now:
+            sendMessageToWebView(startVoiceCallMessage(collapsed: false))
+        case .onceOnScreen:
+            voiceStartOnAppear = true
+        case .afterLoad:
+            pendingVoiceStart = .sheet
+        }
+        if WidgetHolder.presentedContainer == nil {
+            show(mode: config.presentationMode, sheetHeightFraction: nil, keepingVoiceStart: true)
+        }
+    }
+
+    /// The sheet a call was asked for is on screen: the call starts in it.
+    func startVoiceCallIfAsked() {
+        guard voiceStartOnAppear else { return }
+        voiceStartOnAppear = false
+        sendMessageToWebView(startVoiceCallMessage(collapsed: false))
+    }
+
+    /// A call on in a page nothing shows: it moves to the bubble, the way a
+    /// collapse puts it there. False when there is no such call.
+    func showLiveCallInBubble() -> Bool {
+        guard voice.callActive, collapsedCall == nil, WidgetHolder.presentedContainer == nil,
+              state == .loaded, let config, let webView,
+              let scene = ActiveWindow.anyWindow()?.windowScene
+        else { return false }
+        debug("voice: a call was on with nothing on screen, showing it in the bubble")
+        voice.collapse()
+        showBubbleInPage(true)
+        voiceCallWillCollapse(
+            webView: webView, scene: scene, mode: config.presentationMode,
+            fraction: config.sheetHeightFraction, roomGiven: false, presenter: nil,
+            waitForSize: true
+        )
+        WidgetHolder.closeRequested = false
+        WidgetHolder.setCloseObserver { [weak self] in self?.closeCollapsedVoiceCall() }
+        setWidgetVisible(true)
+        notify { $0.onWidgetShown() }
+        return true
     }
 
     func startVoiceCallMessage(collapsed: Bool) -> String {
@@ -209,18 +289,45 @@ extension WidgetEngine {
         notify { $0.onWidgetShown() }
         // A page that never starts the call (one that predates this, or a
         // conversation that cannot take one) must not leave an empty bubble:
-        // the chat opens instead. Keyed on this start's bubble, not only on the
-        // page: a start that ended at once, and a second one within the wait,
-        // must not have the first one's timer open the chat on the second.
-        let generation = loadGeneration
-        DispatchQueue.main.asyncAfter(deadline: .now() + Self.bubbleStartWait) { [weak self, weak window] in
+        // the chat opens instead. Not while the customer answers the
+        // microphone prompt, or the page is still starting the call it asked
+        // the microphone for (`BubbleStartWatch`). Keyed on this start's
+        // bubble, not only on the page: a start that ended at once, and a
+        // second one within the wait, must not have the first one's timer open
+        // the chat on the second.
+        mediaRequestedSinceBubbleStart = false
+        watchBubbleStart(
+            window: window, generation: loadGeneration, startedAt: Date(),
+            after: BubbleStartWatch.firstCheck
+        )
+    }
+
+    private func watchBubbleStart(
+        window: VoiceBubbleWindow, generation: Int, startedAt: Date, after delay: TimeInterval
+    ) {
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self, weak window] in
             guard let self, let window, generation == self.loadGeneration,
-                  self.collapsedCall?.window === window,
-                  self.voice.collapsed, !self.voice.callActive
+                  self.collapsedCall?.window === window, self.voice.collapsed
             else { return }
-            self.debug("voice: no call came in the bubble, opening the chat")
-            self.voice.expand()
-            self.expandVoiceCall()
+            let decision = BubbleStartWatch.decide(
+                elapsed: Date().timeIntervalSince(startedAt),
+                callActive: self.voice.callActive,
+                pageAnswered: self.mediaRequestedSinceBubbleStart,
+                awaitingPermission: self.awaitingMediaPermission
+            )
+            switch decision {
+            case .stop:
+                return
+            case .keepWaiting:
+                self.watchBubbleStart(
+                    window: window, generation: generation, startedAt: startedAt,
+                    after: BubbleStartWatch.recheckInterval
+                )
+            case .openChat:
+                self.debug("voice: no call came in the bubble, opening the chat")
+                self.voice.expand()
+                self.expandVoiceCall()
+            }
         }
     }
 
@@ -316,13 +423,12 @@ extension WidgetEngine {
     /// The host closed the widget while it was a bubble: a real close, as if
     /// the sheet had been up. The WebView goes windowless and warm, like
     /// after any close.
-    private func closeCollapsedVoiceCall() {
+    func closeCollapsedVoiceCall() {
         guard let call = collapsedCall, WidgetHolder.presentedContainer == nil else { return }
         collapsedCall = nil
         WidgetHolder.setCloseObserver(nil)
         // No screen is left to show the call on: it ends with the widget.
-        // (Closing the sheet during a call keeps it, as before.)
-        sendMessageToWebView(OutboundMessage.endVoiceCall())
+        endVoiceCallOnHostClose()
         call.window.close()
         if webView?.window === call.window {
             webView?.removeFromSuperview()
@@ -349,8 +455,6 @@ extension WidgetEngine {
     /// A page that never measures its bubble still gets one.
     private static let defaultBubbleSize = CGSize(width: 180, height: 84)
     private static let bubbleSizeWait: TimeInterval = 1
-    /// How long a call asked for in the bubble may take to start before the chat opens instead.
-    private static let bubbleStartWait: TimeInterval = 8
     /// How long an expansion may take to put the sheet on screen.
     private static let expandWait: TimeInterval = 2
 }
